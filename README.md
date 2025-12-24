@@ -4,7 +4,7 @@
 
 Sandlersteam implements a python interface to the steam tables found in Appendix III of _Chemical, Biochemical, and Engineering Thermodynamics_ (5th edition) by Stan Sandler (Wiley, USA). It should be used for educational purposes only.
 
-The interface operates similarly to the IAPWS steam tables (which you should use instead of these).
+The interface operates similarly to the IAPWS steam tables.
 
 ## Installation 
 
@@ -14,13 +14,85 @@ Sandlersteam is available via `pip`:
 pip install sandlersteam
 ```
 
-## Usage example
+## Usage
+
+## Command-line interface
+
+Querying properties of steam and water:
+
+```bash
+$ sandlersteam state --T 200 --P 40              
+THERMODYNAMIC STATE OF UNSATURATED STEAM/WATER:
+  T = 200 C
+  P = 40 MPa
+  u = 825.55 kJ/kg
+  v = 0.0011224 m3/kg
+  s = 2.27635 kJ/kg-K
+  h = 870.4 kJ/kg
+$ sandlersteam state --T 200 --x 0.5
+THERMODYNAMIC STATE OF SATURATED STEAM/WATER:
+  T = 200 C
+  P = 0.0015538 MPa
+  u = 1722.98 kJ/kg
+  v = 0.0642585 m3/kg
+  s = 4.3816 kJ/kg-K
+  h = 1822.82 kJ/kg
+  quality x = 0.5
+    uL = 850.65 kJ/kg, uV = 2595.3 kJ/kg
+    vL = 0.001157 m3/kg, vV = 0.12736 m3/kg
+    sL = 2.3309 kJ/kg-K, sV = 6.4323 kJ/kg-K
+    hL = 852.45 kJ/kg, hV = 2793.2 kJ/kg
+```
+
+Generating LaTeX source for a table or a block:
+
+```bash
+$ sandlersteam latex --suphP 4.0 --output tmp.tex
+Request completed: wrote output to tmp.tex
+$ cat tmp.tex
+
+\clearpage
+\noindent THERMODYNAMIC PROPERTIES OF STEAM (Selected)\\*[1cm]
+Superheated steam:\\*[0mm]
+\noindent\begin{minipage}{0.6\textwidth}
+\footnotesize\vspace{5mm}
+\begin{center}
+$P$ = 4.0 MPa\\*[1ex]
+\begin{tabular}{>{\raggedleft}p{8mm}@{}p{5mm}>{\raggedleft}p{4mm}@{}p{10mm}>{\raggedleft}p{10mm}@{}p{3mm}>{\raggedleft}p{10mm}@{}p{3mm}>{\raggedleft\arraybackslash}p{3mm}@{}p{8mm}}
+\toprule
+\multicolumn{2}{c}{$T$~($^\circ$C)} & \multicolumn{2}{c}{$\hat{V}$} & \multicolumn{2}{c}{$\hat{U}$} & \multicolumn{2}{c}{$\hat{H}$} & \multicolumn{2}{c}{$\hat{S}$}\\
+\toprule
+\midrule
+250 & .4 & 0 & .04978 & 2602 & .3 & 2801 & .4 & 6 & .0701 \\
+275 &  & 0 & .05457 & 2667 & .9 & 2886 & .2 & 6 & .2285 \\
+300 &  & 0 & .05884 & 2725 & .3 & 2960 & .7 & 6 & .3615 \\
+350 &  & 0 & .06645 & 2826 & .7 & 3092 & .5 & 6 & .5821 \\
+400 &  & 0 & .07341 & 2919 & .9 & 3213 & .6 & 6 & .7690 \\
+450 &  & 0 & .08002 & 3010 & .2 & 3330 & .3 & 6 & .9363 \\
+500 &  & 0 & .08643 & 3099 & .5 & 3445 & .3 & 7 & .0901 \\
+600 &  & 0 & .09885 & 3279 & .1 & 3674 & .4 & 7 & .3688 \\
+700 &  & 0 & .11095 & 3462 & .1 & 3905 & .9 & 7 & .6198 \\
+800 &  & 0 & .12287 & 3650 & .0 & 4141 & .5 & 7 & .8502 \\
+900 &  & 0 & .13469 & 3843 & .6 & 4382 & .3 & 8 & .0647 \\
+1000 &  & 0 & .14645 & 4042 & .9 & 4628 & .7 & 8 & .2662 \\
+1100 &  & 0 & .15817 & 4248 & .0 & 4880 & .6 & 8 & .4567 \\
+1200 &  & 0 & .16987 & 4458 & .6 & 5138 & .1 & 8 & .6376 \\
+1300 &  & 0 & .18156 & 4674 & .3 & 5400 & .5 & 8 & .8100 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{minipage}
+
+\noindent $\hat{V}\ [=]\ \mbox{m$^3$/kg}$; $\hat{U}\ [=]\ \mbox{kJ/kg}$; $\hat{H}\ [=]\ \mbox{kJ/kg}$; $\hat{S}\ [=]\ \mbox{kJ/kg-K}$\\*[1cm]
+```
+
+### API
 
 Below we create a `State` object to define a thermodynamic state for steam at 100 deg. C and 0.1 MPa:
 
 ```python
 >>> from sandlersteam.state import State
->>> state1 = State(T=100.0,P=0.1)
+>>> state1 = State(T=100.0, P=0.1)
 >>> state1.h  # enthalpy in kJ/kg
 2676.2
 >>> state1.u  # internal energy in kJ/kg
@@ -59,7 +131,6 @@ When specifying quality, a `State` objects acquires `Liquid` and `Vapor` attribu
 >>> 0.5*(s.Vapor.v+s.Liquid.v)
 0.836972
 ```
-
 One can also import the `SteamTables` dictionary from the state `state` module and then generate LaTeX-compatible versions of either blocks in the superheated/subcooled steam tables or entire saturated steam stables, listed by temperature or pressure. For example:
 
 ```python
@@ -104,6 +175,8 @@ This renders as
 
 ## Release History
 
+* 0.5.0:
+    * command-line interface
 * 0.4.2:
     * `RandomState` class introduced
 * 0.3.3:

@@ -4,7 +4,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 [project]
 name = "sandlersteam"
-version = "0.4.2"
+version = "0.5.0"
 authors = [
   { name="Cameron F Abrams", email="cfa22@drexel.edu" },
 ]
@@ -22,3 +22,19 @@ dependencies = [
 ]
 [tool.pytest.ini_options]
 log_cli = true
+
+[project.scripts]
+sandlersteam="sandlersteam.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sandlersteam"]
+
+[tool.hatch.build]
+include = [
+  "src/sandlersteam/resources/**",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/sandlersteam/**",
+]
