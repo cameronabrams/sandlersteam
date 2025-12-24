@@ -18,10 +18,12 @@ def show_available_tables(args):
     print(f'    P-sat: P from {SteamTables["satd"].lim["P"][0]} to {SteamTables["satd"].lim["P"][1]} MPa')
     print(f'  Superheated steam tables blocks at pressures:')
     for p in SteamTables["suph"].uniqs['P']:
-        print(f'    {p} MPa')
+        Tlist = SteamTables["suph"].data[SteamTables["suph"].data['P'] == p]['T'].to_list()
+        print(f'    {p} MPa: ', ', '.join([str(x) for x in Tlist]))
     print(f'  Subcooled steam tables blocks at pressures:')
     for p in SteamTables["subc"].uniqs['P']:
-        print(f'    {p} MPa')
+        Tlist = SteamTables["subc"].data[SteamTables["subc"].data['P'] == p]['T'].to_list()
+        print(f'    {p} MPa: ', ', '.join([str(x) for x in Tlist]))
 
 def state_subcommand(args):
     state_kwargs = {}
@@ -147,8 +149,10 @@ class State:
         ''' T and P are both given explicitly.  Could be either superheated or subcooled state '''
         assert self.spec == ['T', 'P']
         specdict = {'T': self.T, 'P': self.P}
+        # print(f'at P {self.P}, checking T {self.T} between {self.satd.lim["T"][0]} and {self.satd.lim["T"][1]}')
         if self.satd.lim['T'][0] < self.T < self.satd.lim['T'][1]:
             Psat = self.satd.interpolators['T']['P'](self.T)
+            # print(f'Returns Psat of {Psat}')
         else:
             Psat = LARGE
         if self.P > Psat:

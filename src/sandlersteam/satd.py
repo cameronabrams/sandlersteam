@@ -10,16 +10,17 @@ def merge_high_low_P_tables(lowP_df, highP_df):
     """ Merge two dataframes of steam table data at low and high pressures """
     lowP_df['P'] = lowP_df['P'] / 1000.0  # convert kPa to MPa
     merged_df = pd.concat([lowP_df, highP_df], axis=0)
-    merged_df.sort_values(by=['P','T'], inplace=True)
-    merged_df.reset_index(drop=True, inplace=True)
+    icolumn = merged_df.columns[0]
+    merged_df.sort_values(by=icolumn, inplace=True)
+    # merged_df.reset_index(drop=True, inplace=True)
     return merged_df
 
 class SaturatedSteamTables:
     data_path = files('sandlersteam') / 'resources' / 'data'
-    tablesP = [data_path / 'SandlerSatdSteamTableP2.txt', 
-               data_path / 'SandlerSatdSteamTableP1.txt']
-    tablesT = [data_path / 'SandlerSatdSteamTableT2.txt', 
-               data_path / 'SandlerSatdSteamTableT1.txt'] 
+    tablesP = [data_path / 'SandlerSatdSteamTableP1.txt', 
+               data_path / 'SandlerSatdSteamTableP2.txt']
+    tablesT = [data_path / 'SandlerSatdSteamTableT1.txt', 
+               data_path / 'SandlerSatdSteamTableT2.txt'] 
     punits = ['kPa', 'MPa']
     colorder = ['T', 'P', 'VL', 'VV', 'UL', 'DU', 'UV', 'HL', 'DH', 'HV',
                 'SL', 'DS', 'SV']

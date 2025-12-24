@@ -175,6 +175,8 @@ This renders as
 
 ## Release History
 
+* 0.5.1:
+    * units bugfix after cli introduction
 * 0.5.0:
     * command-line interface
 * 0.4.2:
