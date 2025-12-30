@@ -21,7 +21,7 @@ def cli():
     }
     parser = ap.ArgumentParser(
         prog='sandlersteam',
-        description='Generate LaTeX-formatted steam tables'
+        description='Interact with steam tables in Sandler\'s textbook'
     )
     parser.add_argument(
         '-b',
