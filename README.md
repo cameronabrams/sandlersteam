@@ -23,7 +23,7 @@ The steam tables provided in _Chemical, Biochemical, and Engineering Thermodynam
 Querying properties of steam and water:
 
 ```bash
-$ sandlersteam steam state -TC 800 -P 40
+$ sandlersteam state -TC 800 -P 40
 THERMODYNAMIC STATE OF UNSATURATED STEAM/WATER:
 T =  1073.2 K =  800.0 C
 P =  40.00 MPa =  400.00 bar
@@ -31,14 +31,15 @@ u =  3517.8 kJ/kg =  63374.2 J/mol
 v =  0.011523 m3/kg =  0.00020759 m3/mol
 s =  6.6662 kJ/kg-K =  120.093 J/mol-K
 h =  3978.7 kJ/kg =  71677.4 J/mol
+$ sandlersteam state -TC 200 -x 0.5 
 THERMODYNAMIC STATE OF SATURATED STEAM/WATER:
-T =  473.1 K =  200.0 C
-P =  1.55 MPa =  15.54 bar
-u =  1722.98 kJ/kg =  31039.9 J/mol
-v =  0.0642585 m3/kg =  0.00115763 m3/mol
-s =  4.3816 kJ/kg-K =  78.9358 J/mol-K
-h =  1822.82 kJ/kg =  32838.7 J/mol
-x =  0.50 kg vapor/kg
+TC =  200.0 C =  473.1 K
+P  =  1.55 MPa =  15.54 bar
+u  =  1722.98 kJ/kg =  31039.9 J/mol
+v  =  0.0642585 m3/kg =  0.00115763 m3/mol
+s  =  4.3816 kJ/kg-K =  78.9358 J/mol-K
+h  =  1822.82 kJ/kg =  32838.7 J/mol
+x  =  0.50 kg vapor/kg
 uL =  850.65 kJ/kg =  15324.7 J/mol
 uV =  2595.3 kJ/kg =  46755.1 J/mol
 vL =  0.001157 m3/kg =  2.08437e-05 m3/mol
@@ -48,7 +49,7 @@ sV =  6.4323 kJ/kg-K =  115.88 J/mol-K
 hL =  852.45 kJ/kg =  15357.1 J/mol
 hV =  2793.2 kJ/kg =  50320.3 J/mol
 ```
-
+<!-- 200     1.5538  0.001157 0.12736   850.65 1744.7 2595.3  852.45 1940.7 2793.2 2.3309 4.1014 6.4323 -->
 Generating LaTeX source for a table or a block:
 
 ```bash
@@ -111,7 +112,7 @@ Below we create a `State` object to define a thermodynamic state for steam at 10
 
 Specifying a state requires values for two independent state variables.  The state variables recognized by sandlersteam are:
 
-* `T` temperature in K (alternatively `TC` for temperature in C)
+* `TC` temperature in C (alternatively `TK` for temperature in K)
 * `P` pressure in MPa
 * `u` specific internal energy in kJ/kg
 * `v` specific volume in m<sup>3</sup>/kg
@@ -125,7 +126,7 @@ properties receiving values by (bi)linear interpolation.
 When specifying quality, a `State` objects acquires `Liquid` and `Vapor` attributes that each hold intensive, saturated single-phase property values.  The property value attributes owned directly by the `State` object reflect the quality-weighted sum of the respective single-phase values:
 
 ```python
->>> s = State(T=100,x=0.5)
+>>> s = State(TC=100,x=0.5)
 >>> s.P
 0.10135
 >>> s.v
@@ -182,6 +183,8 @@ This renders as
 
 ## Release History
 
+* 0.6.1
+    * fixed `README`
 * 0.6.0
     * uses `StateReporter`
     * reports in kg and molar units

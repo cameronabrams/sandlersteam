@@ -16,17 +16,17 @@ SteamTables = dict(
 def show_available_tables(args):
     print('Available steam tables:')
     print(f'  Saturated steam tables:')
-    print(f'    T-sat: T from {SteamTables["satd"].lim["T"][0]} to {SteamTables["satd"].lim["T"][1]} C')
-    print(f'             from {SteamTables["satd"].lim["T"][0] + 273.15} to {SteamTables["satd"].lim["T"][1] + 273.15} K')
+    print(f'    T-sat: T from {SteamTables["satd"].lim["TC"][0]} to {SteamTables["satd"].lim["TC"][1]} C')
+    print(f'             from {np.round(SteamTables["satd"].lim["TC"][0] + 273.15,2)} to {np.round(SteamTables["satd"].lim["TC"][1] + 273.15,2)} K')
     print(f'    P-sat: P from {SteamTables["satd"].lim["P"][0]} to {SteamTables["satd"].lim["P"][1]} MPa')
-    print(f'             from {SteamTables["satd"].lim["P"][0]*10} to {SteamTables["satd"].lim["P"][1]*10} bar')
+    print(f'             from {np.round(SteamTables["satd"].lim["P"][0]*10,2)} to {np.round(SteamTables["satd"].lim["P"][1]*10,2)} bar')
     print(f'  Superheated steam tables blocks:\nPressure (MPa) -> Temperatures (C):')
     for p in SteamTables["suph"].uniqs['P']:
-        Tlist = SteamTables["suph"].data[SteamTables["suph"].data['P'] == p]['T'].to_list()
+        Tlist = SteamTables["suph"].data[SteamTables["suph"].data['P'] == p]['TC'].to_list()
         print(f'    {p:>5.2f} ->', ', '.join([f"{x:>7.2f}" for x in Tlist]))
     print(f'  Subcooled steam tables blocks:\nPressure (MPa) -> Temperatures (C):')
     for p in SteamTables["subc"].uniqs['P']:
-        Tlist = SteamTables["subc"].data[SteamTables["subc"].data['P'] == p]['T'].to_list()
+        Tlist = SteamTables["subc"].data[SteamTables["subc"].data['P'] == p]['TC'].to_list()
         print(f'    {p:>5.2f} ->', ', '.join([f"{x:>6.2f}" for x in Tlist]))
 
 def state_subcommand(args):
@@ -35,8 +35,6 @@ def state_subcommand(args):
         val = getattr(args, p)
         if val is not None:
             state_kwargs[p] = val
-            if p == 'T':
-                state_kwargs['TC'] = val - 273.15
     state = State(**state_kwargs)
     report = state.report()
     print(report)
@@ -53,11 +51,11 @@ KG_PER_MOL = G_PER_MOL / 1000.000  # kg/mol for water
 MOL_PER_KG = 1.0 / KG_PER_MOL  # mol/kg for water
 
 class State:
-    _p = ['T','P','u','v','s','h','x']
-    _u = ['K','MPa','kJ/kg','m3/kg','kJ/kg-K','kJ/kg','']
+    _p = ['TC','P','u','v','s','h','x']
+    _u = ['C','MPa','kJ/kg','m3/kg','kJ/kg-K','kJ/kg','']
     _fs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .2f}']
-    _sp = ['T','P','VL','VV','UL','UV','HL','HV','SL','SV']
-    _su = ['K','MPa','m3/kg','m3/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg-K','kJ/kg-K']
+    _sp = ['TC','P','VL','VV','UL','UV','HL','HV','SL','SV']
+    _su = ['C','MPa','m3/kg','m3/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg-K','kJ/kg-K']
     _sfs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}']
 
     def report(self):
@@ -65,10 +63,10 @@ class State:
         msg = 'SATURATED ' if satd else 'UNSATURATED '
         reporter = StateReporter()
         for p, u, fs in zip(self._p, self._u, self._fs):
-            if p == 'T' and self.T is not None:
-                TC = self.T - 273.15
-                reporter.add_property('T', self.T, 'K', fstring=fs)
-                reporter.add_value_to_property('T', TC, 'C', fstring=fs)
+            if p == 'TC' and self.TC is not None:
+                TK = self.TC + 273.15
+                reporter.add_property('TC', self.TC, 'C', fstring=fs)
+                reporter.add_value_to_property('TC', TK, 'K', fstring=fs)
             elif p != 'x':
                 val = self.__dict__[p]
                 if val is not None:
@@ -87,7 +85,7 @@ class State:
         if hasattr(self, 'x') and self.x is not None:
             reporter.add_property('x', self.x, 'kg vapor/kg', fstring=self._fs[-1])
             for sp, su, sfs in zip(self._p, self._u, self._sfs):
-                if sp not in ['T','P','x']:
+                if sp not in ['TC','P','x']:
                     valL = self.Liquid.__dict__[sp[0].lower()]
                     valV = self.Vapor.__dict__[sp[0].lower()]
                     reporter.add_property(f'{sp}L', valL, su, fstring=sfs)
@@ -115,19 +113,19 @@ class State:
             ''' explicitly saturated '''
             self._resolve_satd()
         else:
-            if self.spec == ['T', 'P']:
+            if self.spec == ['TC', 'P']:
                 ''' T and P given explicitly '''
                 self._resolve_subsup()
-            elif 'T' in self.spec or 'P' in self.spec:
+            elif 'TC' in self.spec or 'P' in self.spec:
                 ''' T OR P given, along with some other property (v,u,s,h) '''
                 self._resolve_TPTh()
             else:
-                raise Exception('If not explicitly saturated, you must specify either T or P')
+                raise Exception('If not explicitly saturated, you must specify either TC or P')
 
     def _resolve_TPTh(self):
-        ''' T or P along with one other property (th) are specified '''
+        ''' TC or P along with one other property (th) are specified '''
         p = self.spec[0]
-        cp = 'P' if p == 'T' else 'T'
+        cp = 'P' if p == 'TC' else 'TC'
         th = self.spec[1]
         if self.satd.lim[p][0] < self.__dict__[p] < self.satd.lim[p][1]:
             ''' T or P is between saturation limits; may be a saturated state, so 
@@ -144,7 +142,7 @@ class State:
                 self.Liquid.__dict__[th] = thL
                 self.Vapor.__dict__[th] = thV
                 for pp in self._sp:
-                    if pp not in ['T', 'P', f'{th.upper()}V', f'{th.upper()}L']:
+                    if pp not in ['TC', 'P', f'{th.upper()}V', f'{th.upper()}L']:
                         ppp = self.satd.interpolators[p][pp](self.__dict__[p])
                         if pp[-1] =='V':
                             self.Vapor.__dict__[pp[0].lower()] = ppp
@@ -185,11 +183,11 @@ class State:
 
     def _resolve_subsup(self):
         ''' T and P are both given explicitly.  Could be either superheated or subcooled state '''
-        assert self.spec == ['T', 'P']
-        specdict = {'T': self.T, 'P': self.P}
-        # print(f'at P {self.P}, checking T {self.T} between {self.satd.lim["T"][0]} and {self.satd.lim["T"][1]}')
-        if self.satd.lim['T'][0] < self.T < self.satd.lim['T'][1]:
-            Psat = self.satd.interpolators['T']['P'](self.T)
+        assert self.spec == ['TC', 'P']
+        specdict = {'TC': self.TC, 'P': self.P}
+        # print(f'at P {self.P}, checking T {self.T} between {self.satd.lim['TC'][0]} and {self.satd.lim['TC'][1]}')
+        if self.satd.lim['TC'][0] < self.TC < self.satd.lim['TC'][1]:
+            Psat = self.satd.interpolators['TC']['P'](self.TC)
             # print(f'Returns Psat of {Psat}')
         else:
             Psat = LARGE
@@ -209,21 +207,21 @@ class State:
         p = self.spec[0]
         self.Liquid = PHASE()
         self.Vapor = PHASE()
-        if p == 'T':
-            ''' The other property is T; make sure it lies between saturation limits '''
-            if self.T < self.satd.lim['T'][0] or self.T > self.satd.lim['T'][1]:
-                raise Exception(f'Cannot have a saturated state at T = {self.T} C')
+        if p == 'TC':
+            ''' The other property is TC; make sure it lies between saturation limits '''
+            if self.TC < self.satd.lim['TC'][0] or self.TC > self.satd.lim['TC'][1]:
+                raise Exception(f'Cannot have a saturated state at TC = {self.TC} C')
             ''' Assign all other property values by interpolation '''
             for q in self._sp:
-                if q != 'T':
-                    prop = self.satd.interpolators['T'][q](self.T)
+                if q != 'TC':
+                    prop = self.satd.interpolators['TC'][q](self.TC)
                     if q == 'P': self.__dict__[q] = prop
                     if q[-1] == 'V':
                         self.Vapor.__dict__[q[0].lower()] = prop
                     elif q[-1] == 'L':
                         self.Liquid.__dict__[q[0].lower()] = prop
             for q in self._p:
-                if not q in 'PTx':
+                if not q in ['TC','P','x']:
                     self.__dict__[q] = self.x * self.Vapor.__dict__[q] + (1 - self.x) * self.Liquid.__dict__[q]
         elif p == 'P':
             ''' The other property is P; make sure it lies between saturation limits '''
@@ -233,13 +231,13 @@ class State:
             for q in self._sp:
                 if q != 'P':
                     prop = self.satd.interpolators['P'][q](self.P)
-                    if q == 'T': self.__dict__[q] = prop
+                    if q == 'TC': self.__dict__[q] = prop
                     if q[-1] == 'V':
                         self.Vapor.__dict__[q[0].lower()] = prop
                     elif q[-1] == 'L':
                         self.Liquid.__dict__[q[0].lower()] = prop
             for q in self._p:
-                if not q in 'PTx':
+                if not q in ['TC','P','x']:
                     self.__dict__[q] = self.x * self.Vapor.__dict__[q] + (1 - self.x) * self.Liquid.__dict__[q]
         else:
             ''' The other property is neither T or P; must use a lever-rule-based interpolation '''
@@ -247,13 +245,13 @@ class State:
 
     def _resolve_satd_lever(self):
         p = self.spec[0]
-        assert p != 'T' and p != 'P'
+        assert p != 'TC' and p != 'P'
         ''' Vapor fraction and one other property value (not T or P) is given '''
         th = self.__dict__[p]
         x = self.__dict__['x']
         ''' Build an array of V-L mixed properties based on given value of x '''
-        Y = np.array(self.satd.DF['T'][f'{p.upper()}V']) * x + np.array(self.satd.DF['T'][f'{p.upper()}L']) * (1 - x)
-        X = np.array(self.satd.DF['T']['T'])
+        Y = np.array(self.satd.DF['TC'][f'{p.upper()}V']) * x + np.array(self.satd.DF['TC'][f'{p.upper()}L']) * (1 - x)
+        X = np.array(self.satd.DF['TC']['TC'])
         ''' define an interpolator '''
         f = interp1d(X, Y)
         try:
@@ -261,8 +259,8 @@ class State:
             self.T = f(x)
             ''' Assign all other property values '''
             for q in self._sp:
-                if q != 'T':
-                    prop = self.satd.interpolators['T'][q](self.T)
+                if q != 'TC':
+                    prop = self.satd.interpolators['TC'][q](self.TC)
                     if q == 'P': self.__dict__[q] = prop
                     if q[-1] == 'V':
                         self.Vapor.__dict__[q[0].lower()] = prop
@@ -298,36 +296,31 @@ class State:
         self.subc = SteamTables['subc']
         for p in self._p:
             self.__dict__[p] = kwargs.get(p, None)
-        if 'T' in kwargs and not 'TC' in kwargs:
-            self.TC = self.T - 273.15
-        elif 'TC' in kwargs and not 'T' in kwargs:
-            self.TC = kwargs['TC']
-            self.T = self.TC + 273.15
         self._resolve()
         self._scalarize()
 
 class RandomSample(State):
-    def __init__(self,phase='suph',satdDOF='T',seed=None,Prange=None,Trange=None):
+    def __init__(self,phase='suph',satdDOF='TC',seed=None,Prange=None,Trange=None):
         if phase=='satd':
-            if satdDOF=='T':
-                sample_this=SteamTables[phase].DF['T']
+            if satdDOF=='TC':
+                sample_this=SteamTables[phase].DF['TC']
             else:
                 sample_this=SteamTables[phase].DF['P']
         elif phase=='suph' or phase=='subc':
             sample_this=SteamTables[phase].data
-        abs_mins={'T':sample_this['T'].min(),'P':sample_this['P'].min()}
-        abs_maxs={'T':sample_this['T'].max(),'P':sample_this['P'].max()}
+        abs_mins={'TC':sample_this['TC'].min(),'P':sample_this['P'].min()}
+        abs_maxs={'TC':sample_this['TC'].max(),'P':sample_this['P'].max()}
         sample=sample_this.sample(n=1,random_state=seed)
-        T=sample['T'].values[0]
+        TC=sample['TC'].values[0]
         P=sample['P'].values[0]
         if Trange and not Prange:
-            if Trange[0]<abs_mins['T']:
-                raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum T in the data ({abs_mins["T"]})')
-            if Trange[1]>abs_maxs['T']:
-                raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum T in the data ({abs_maxs["T"]})')
-            while not Trange[0]<T<Trange[1]:
+            if Trange[0]<abs_mins['TC']:
+                raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum TC in the data ({abs_mins["TC"]})')
+            if Trange[1]>abs_maxs['TC']:
+                raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum TC in the data ({abs_maxs["TC"]})')
+            while not Trange[0]<TC<Trange[1]:
                 sample=sample_this.sample(n=1)
-                T=sample['T'].values[0]
+                TC=sample['TC'].values[0]
         if Prange and not Trange:
             if Prange[0]<abs_mins['P']:
                 raise ValueError(f'Prange[0] ({Prange[0]}) is below the minimum P in the data ({abs_mins["P"]})')
@@ -337,23 +330,23 @@ class RandomSample(State):
                 sample=sample_this.sample(n=1)
                 P=sample['P'].values[0]
         if Prange and Trange:
-            if Trange[0]<abs_mins['T']:
-                raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum T in the data ({abs_mins["T"]})')
-            if Trange[1]>abs_maxs['T']:
-                raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum T in the data ({abs_maxs["T"]})')
+            if Trange[0]<abs_mins['TC']:
+                raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum TC in the data ({abs_mins["TC"]})')
+            if Trange[1]>abs_maxs['TC']:
+                raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum TC in the data ({abs_maxs["TC"]})')
             if Prange[0]<abs_mins['P']: 
                 raise ValueError(f'Prange[0] ({Prange[0]}) is below the minimum P in the data ({abs_mins["P"]})')
             if Prange[1]>abs_maxs['P']: 
                 raise ValueError(f'Prange[1] ({Prange[1]}) is above the maximum P in the data ({abs_maxs["P"]})')
-            while not Prange[0]<P<Prange[1] or not Trange[0]<T<Trange[1]:
+            while not Prange[0]<P<Prange[1] or not Trange[0]<TC<Trange[1]:
                 sample=sample_this.sample(n=1)
-                T=sample['T'].values[0]
+                TC=sample['TC'].values[0]
                 P=sample['P'].values[0]
         if phase=='satd':
-            if satdDOF=='T':
-                super().__init__(T=T,x=1.0)
+            if satdDOF=='TC':
+                super().__init__(T=TC,x=1.0)
             else:
                 super().__init__(P=P,x=1.0)
         else:
-            super().__init__(T=T,P=P)
+            super().__init__(T=TC,P=P)
     

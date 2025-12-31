@@ -4,6 +4,15 @@ import argparse as ap
 from .request import request_subcommand
 from .state import state_subcommand, show_available_tables
 
+def regularize_T(args):
+    # args is a namespace in which TC and TK must agree
+    if args.TK is not None:
+        args.TC = args.TK - 273.15
+    elif args.TC is not None:
+        args.TK = args.TC + 273.15
+    else:
+        raise ValueError('Either temperature in K or C must be specified')
+
 def cli():
     subcommands = {
         'latex': dict(
@@ -93,6 +102,8 @@ def cli():
         ('TC', 'temperatureC', 'temperature in C (if T not specified)', float, True),
     ]
     for prop, longname, explanation, tp, _ in state_args + extra_args:
+        if prop=='T':
+            prop = 'TK'
         command_parsers['state'].add_argument(
             f'-{prop}',
             f'--{longname}',
@@ -101,16 +112,14 @@ def cli():
             help=f'{explanation.replace("_"," ")}'
         )
     args = parser.parse_args()
-    if args.TC == None and hasattr(args, 'T'):
-        args.TC = args.T - 273.15
-    elif args.T == None and hasattr(args, 'TC'):
-        args.T = args.TC + 273.15
-    nprops = 0
-    for prop, _, _, _, _ in state_args:
-        if hasattr(args, prop) and getattr(args, prop) is not None:
-            nprops += 1
-    if nprops > 2:
-        parser.error('At most two of P, T, x, v, u, h, and s may be specified for "state" subcommand')
+    if args.func == state_subcommand:
+        regularize_T(args)
+        nprops = 0
+        for prop, _, _, _, _ in state_args:
+            if hasattr(args, prop) and getattr(args, prop) is not None:
+                nprops += 1
+        if nprops > 2:
+            parser.error('At most two of P, T, x, v, u, h, and s may be specified for "state" subcommand')
 
     if hasattr(args, 'func'):
         args.func(args)

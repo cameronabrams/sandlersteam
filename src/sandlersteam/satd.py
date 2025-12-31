@@ -22,9 +22,9 @@ class SaturatedSteamTables:
     tablesT = [data_path / 'SandlerSatdSteamTableT1.txt', 
                data_path / 'SandlerSatdSteamTableT2.txt'] 
     punits = ['kPa', 'MPa']
-    colorder = ['T', 'P', 'VL', 'VV', 'UL', 'DU', 'UV', 'HL', 'DH', 'HV',
+    colorder = ['TC', 'P', 'VL', 'VV', 'UL', 'DU', 'UV', 'HL', 'DH', 'HV',
                 'SL', 'DS', 'SV']
-    colFirstTwoTexLabels = {'T':['$T$ (C)', '$P$ (MPa)'],
+    colFirstTwoTexLabels = {'TC':['$T$ (C)', '$P$ (MPa)'],
                             'P':['$P$ (MPa)', '$T$ (C)']}
 
     colRestTexLabels = [r'$\hat{V}^L$', r'$\hat{V}^V$', 
@@ -39,14 +39,13 @@ class SaturatedSteamTables:
         self.DF={'P': merge_high_low_P_tables(
                         pd.read_csv(self.tablesP[0], sep=r'\s+', header=0, index_col=None),
                         pd.read_csv(self.tablesP[1], sep=r'\s+', header=0, index_col=None))[self.colorder],
-                 'T': merge_high_low_P_tables(
+                 'TC': merge_high_low_P_tables(
                         pd.read_csv(self.tablesT[0], sep=r'\s+', header=0, index_col=None),
                         pd.read_csv(self.tablesT[1], sep=r'\s+', header=0, index_col=None))[self.colorder]}
         self.lim = {'P':[self.DF['P']['P'].min(),self.DF['P']['P'].max()],
-                    'T':[self.DF['T']['T'].min(),self.DF['T']['T'].max()]}
-
+                    'TC':[self.DF['TC']['TC'].min(),self.DF['TC']['TC'].max()]}
         self.interpolators = {}
-        for bp, cp in zip(['P', 'T'], ['T', 'P']):
+        for bp, cp in zip(['P', 'TC'], ['TC', 'P']):
             self.interpolators[bp] = {}
             X = np.array(self.DF[bp][bp].to_list())
             for p in [cp, 'VL', 'VV', 'UL', 'UV', 'HL', 'HV', 'SL', 'SV']:
@@ -54,12 +53,12 @@ class SaturatedSteamTables:
                 self.interpolators[bp][p] = svi(interp1d(X, Y, kind='linear'))
                 
     def to_latex(self, **kwargs):
-        by = kwargs.get('by', 'T')
-        cp = 'T' if by == 'P' else 'P'
+        by = kwargs.get('by', 'TC')
+        cp = 'TC' if by == 'P' else 'P'
         assert by in 'PT'
         block = self.DF[by]
         if not block.empty:
-            splits = [block[block['T'] < 97.0], block[block['T'] > 97.0]]
+            splits = [block[block['TC'] < 97.0], block[block['TC'] > 97.0]]
             splits[0].loc[:,'P']=splits[0].loc[:,'P']*1000 # kPa from MPa
             strsplits = []
             for bs, pu in zip(splits,['kPa', 'MPa']):
@@ -123,11 +122,11 @@ class SaturatedSteamTables:
                                     if f == 0.0: fs = ''
                                     else:
                                         while len(fs) > 3 and fs[-1] == '0': fs = fs[:-1]
-                        elif c == 'T' and by == 'T':
+                        elif c == 'TC' and by == 'TC':
                             if f == 0.0: fs = ''
                             else:
                                 while len(fs) > 3 and fs[-1] == '0': fs = fs[:-1]
-                        elif c == 'T' and by == 'P':
+                        elif c == 'TC' and by == 'P':
                             while len(fs) > 3 and fs[-1] == '0': fs = fs[:-1]
                         else:
                             if c == 'VL':

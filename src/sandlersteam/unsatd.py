@@ -79,18 +79,18 @@ class UnsaturatedSteamTable:
         """
         retdict = {}
         xn, yn = specdict.keys()
-        assert [xn, yn] == ['T', 'P']
+        assert [xn, yn] == ['TC', 'P']
         xi, yi = specdict.values()
         df: pd.DataFrame = self.data
         dof = df.columns
         retdict = {}
-        retdict['T'] = xi
+        retdict['TC'] = xi
         retdict['P'] = yi
         tdf = df[df['P'] == yi]
         if not tdf.empty:
-            X = np.array(tdf['T'])
+            X = np.array(tdf['TC'])
             for d in dof:
-                if d not in 'TP':
+                if d not in ['TC','P']:
                     Y = np.array(tdf[d])
                     retdict[d] = np.interp(xi, X, Y, left=np.nan, right=np.nan)
         else:
@@ -102,12 +102,12 @@ class UnsaturatedSteamTable:
             X = np.array([PL, PR])
             LDF = df[df['P'] == PL]
             RDF = df[df['P'] == PR]
-            LT = np.array(LDF['T'])
-            RT = np.array(RDF['T'])
+            LT = np.array(LDF['TC'])
+            RT = np.array(RDF['TC'])
             CT = np.array([T for T in LT if T in RT])
             if xi in CT:
                 for d in dof:
-                    if d not in 'TP':
+                    if d not in ['TC','P']:
                         Y = np.array([LDF[LT == xi][d].values[0], RDF[RT == xi][d].values[0]])
                         retdict[d] = np.interp(yi, X, Y, left=np.nan, right=np.nan)
             else:
@@ -116,11 +116,11 @@ class UnsaturatedSteamTable:
                         break
                 else:
                     raise Exception(f'T {xi} not between {CT[0]} and {CT[-1]} at {yi} MPa')
-                LTDF = LDF[(LDF['T'] == TL) | (LDF['T'] == TR)].sort_values(by='T')
-                RTDF = RDF[(RDF['T'] == TL) | (RDF['T'] == TR)].sort_values(by='T')
+                LTDF = LDF[(LDF['TC'] == TL) | (LDF['TC'] == TR)].sort_values(by='TC')
+                RTDF = RDF[(RDF['TC'] == TL) | (RDF['TC'] == TR)].sort_values(by='TC')
                 iv = np.zeros(2)
                 for p in dof:
-                    if not p in 'TP':
+                    if not p in ['TC','P']:
                         for i in range(2):
                             Lp = LTDF[p].values[i]
                             Rp = RTDF[p].values[i]
@@ -131,10 +131,10 @@ class UnsaturatedSteamTable:
 
     def to_latex(self, P):
         # generates latex version of a P-block of the superheated/subcooled steam table
-        block  = self.data[self.data['P'] == P][['T','V','U','H','S']]
+        block  = self.data[self.data['P'] == P][['TC','V','U','H','S']]
         if not block.empty:
             block_floatsplit =  pd.DataFrame()
-            for c in ['T', 'V', 'U', 'H', 'S']:
+            for c in ['TC', 'V', 'U', 'H', 'S']:
                 w = block[c].astype(int)
                 dd = np.round((block[c] - w), 10).astype(str)
                 d = []
@@ -142,7 +142,7 @@ class UnsaturatedSteamTable:
                 for a, s in zip(w, dd):
                     if '.' in s:
                         ss = s[1:]
-                    if ss == '.0' and c == 'T':
+                    if ss == '.0' and c == 'TC':
                         d.append('')
                     else:
                         if a == 0: # this is a fractional number
@@ -180,14 +180,14 @@ class UnsaturatedSteamTable:
         (V, U, S, H, but not P)
         """
         xn, yn = specdict.keys()
-        assert xn == 'T'
+        assert xn == 'TC'
         xi, yi = specdict.values()
         df = self.data
         dof = list(df.columns)
         dof.remove(yn)
         dof.remove(xn)
         retdict = {}
-        retdict['T'] = xi
+        retdict['TC'] = xi
         retdict[yn] = yi
         LLdat = {}
         LLdat[yn] = []
@@ -195,7 +195,7 @@ class UnsaturatedSteamTable:
             LLdat[d] = []
         for P in self.uniqs['P'][::-1]:  # VUSH properties decrease with increasing P
             tdf = df[df['P'] == P]
-            X = np.array(tdf['T'])
+            X = np.array(tdf['TC'])
             Y = np.array(tdf[yn])
             if Y.min() < yi < Y.max():
                 LLdat['P'].append(P)
@@ -212,7 +212,7 @@ class UnsaturatedSteamTable:
     def PThBilinear(self,specdict):
         """
         Bilinear interpolation given P and another property 
-        (V, U, S, H, but not T)
+        (V, U, S, H, but not TC)
         """
         xn, yn = specdict.keys()
         xi, yi = specdict.values()
@@ -222,7 +222,7 @@ class UnsaturatedSteamTable:
         dof.remove(yn)
         dof.remove(xn)
         retdict = {}
-        retdict['T'] = xi
+        retdict['TC'] = xi
         retdict[yn] = yi
         if xi in self.uniqs['P']:
             tdf = df[df['P'] == xi]
@@ -257,20 +257,20 @@ class UnsaturatedSteamTable:
         (not T or P)
         """
         xn, yn =specdict.keys()
-        assert not xn in 'PT' and not yn in 'PT'
+        assert not xn in ['TC','P'] and not yn in ['TC','P']
         xi, yi = specdict.values()
         df = self.data
         dof = self.data.columns
         LLdat = {}
         for d in dof:
-            if d not in 'TP':
+            if d not in ['TC','P']:
                 LLdat[d] = []
-        LLdat['T'] = self.uniqs['T']
-        for T in LLdat['T']:
-            tdf = df[df['T'] == T]
+        LLdat['TC'] = self.uniqs['TC']
+        for TC in LLdat['TC']:
+            tdf = df[df['TC'] == TC]
             X = np.array(tdf[xn])
             for d in dof:
-                if d!='T' and d!=xn:
+                if d!='TC' and d!=xn:
                     Y = np.array(tdf[d])
                     if Y.min() < yi < Y.max():
                         LLdat[d] = np.interp(xi, X, Y, left=np.nan, right=np.nan)
@@ -288,9 +288,9 @@ class UnsaturatedSteamTable:
         General bilinear interpolation dispatcher
         """
         xn, yn = specdict.keys()
-        if [xn, yn] == ['T', 'P']:
+        if [xn, yn] == ['TC', 'P']:
             return self.TPBilinear(specdict)
-        elif xn == 'T':
+        elif xn == 'TC':
             return self.TThBilinear(specdict)
         elif xn == 'P':
             return self.PThBilinear(specdict)

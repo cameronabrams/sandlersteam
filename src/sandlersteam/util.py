@@ -48,15 +48,15 @@ def my_split(data, hder, P, Tsat, fixw=False):
         df.columns = hder
         i = 1
         for p, ts in zip(P, Tsat):
-            ndf = pd.DataFrame({'T': df['T'].copy(), 'P': np.array([p for _ in range(df.shape[0])])})
+            ndf = pd.DataFrame({'TC': df['TC'].copy(), 'P': np.array([p for _ in range(df.shape[0])])})
             if ndf.iloc[0, 0] == 'Sat.':
                 ndf.iloc[0, 0] = ts
-            ndf['T'] = ndf['T'].astype(float)
+            ndf['TC'] = ndf['TC'].astype(float)
             tdf = df.iloc[:, i:i+4].copy()
             i += 4
             ndf = pd.concat((ndf, tdf), axis=1)
             ndf.dropna(axis=0, inplace=True)
-            ndf.sort_values(by='T', inplace=True)
+            ndf.sort_values(by='TC', inplace=True)
             ndfs.append(ndf)
     mdf = pd.concat(ndfs, axis=0)
     return mdf
