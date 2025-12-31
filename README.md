@@ -183,6 +183,8 @@ This renders as
 
 ## Release History
 
+* 0.7.0
+    * Temperature must be specified via `TC` or `TK`; `T` is not longer recognized.
 * 0.6.1
     * fixed `README`
 * 0.6.0
