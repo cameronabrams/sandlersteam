@@ -21,7 +21,7 @@ def cli():
     }
     parser = ap.ArgumentParser(
         prog='sandlersteam',
-        description='Interact with steam tables in Sandler\'s textbook'
+        description='Interact with steam tables in Sandler\'s textbook',
     )
     parser.add_argument(
         '-b',
@@ -41,9 +41,15 @@ def cli():
         command_parsers[k] = subparsers.add_parser(
             k,
             help=specs['help'],
+            add_help=False,
             formatter_class=ap.RawDescriptionHelpFormatter
         )
         command_parsers[k].set_defaults(func=specs['func'])
+        command_parsers[k].add_argument(
+            '--help',
+            action='help',
+            help=specs['help']
+        )
 
     command_parsers['latex'].add_argument(
         '-o',
@@ -75,27 +81,36 @@ def cli():
         help='include saturated steam table by temperature'
     )
 
-    all_props = [('P','pressure in MPa'),
-                 ('T','temperature in Celsius'),
-                 ('x','quality (0 to 1)'),
-                 ('v','specific volume in m3/kg'),
-                 ('u','specific internal energy in kJ/kg'),
-                 ('h','specific enthalpy in kJ/kg'),
-                 ('s','specific entropy in kJ/kg-K')]
-    for prop, explanation in all_props:
+    state_args = [
+        ('P', 'pressure', 'pressure in MPa', float, True),
+        ('T', 'temperature', 'temperature in K', float, True),
+        ('x', 'quality', 'vapor quality (0 to 1)', float, False),
+        ('v', 'specific_volume', 'specific volume in m3/kg', float, False),
+        ('u', 'internal_energy', 'internal energy in kJ/kg', float, False),
+        ('h', 'enthalpy', 'enthalpy in kJ/kg', float, False),
+        ('s', 'entropy', 'entropy in kJ/kg-K', float, False),]
+    extra_args = [
+        ('TC', 'temperatureC', 'temperature in C (if T not specified)', float, True),
+    ]
+    for prop, longname, explanation, tp, _ in state_args + extra_args:
         command_parsers['state'].add_argument(
-            f'--{prop}',
-            type=float,
-            help=f'{explanation}'
+            f'-{prop}',
+            f'--{longname}',
+            dest=prop,
+            type=tp,
+            help=f'{explanation.replace("_"," ")}'
         )
     args = parser.parse_args()
-    # only 2 of the 3 state variables P,T,x,V,U,H,S may be specified
+    if args.TC == None and hasattr(args, 'T'):
+        args.TC = args.T - 273.15
+    elif args.T == None and hasattr(args, 'TC'):
+        args.T = args.TC + 273.15
     nprops = 0
-    for prop, _ in all_props:
+    for prop, _, _, _, _ in state_args:
         if hasattr(args, prop) and getattr(args, prop) is not None:
-            nprops += 1    
-        if nprops > 2:
-            parser.error('At most two of P,T,x,V,U,H,S may be specified for state command')
+            nprops += 1
+    if nprops > 2:
+        parser.error('At most two of P, T, x, v, u, h, and s may be specified for "state" subcommand')
 
     if hasattr(args, 'func'):
         args.func(args)

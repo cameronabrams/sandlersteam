@@ -73,7 +73,7 @@ class UnsaturatedSteamTable:
         for d in dof:
             self.uniqs[d] = np.sort(np.array(list(set(self.data[d].to_list()))))
 
-    def TPBilinear(self, specdict):
+    def TPBilinear(self, specdict: dict):
         """
         Bilinear interpolation given T and P
         """
@@ -81,8 +81,8 @@ class UnsaturatedSteamTable:
         xn, yn = specdict.keys()
         assert [xn, yn] == ['T', 'P']
         xi, yi = specdict.values()
-        df = self.data
-        dof = self.data.columns
+        df: pd.DataFrame = self.data
+        dof = df.columns
         retdict = {}
         retdict['T'] = xi
         retdict['P'] = yi

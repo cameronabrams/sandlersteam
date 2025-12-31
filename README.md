@@ -16,32 +16,37 @@ pip install sandlersteam
 
 ## Usage
 
-## Command-line interface
+The steam tables provided in _Chemical, Biochemical, and Engineering Thermodynamics_ use temperature in Celsius, pressure in MPa (or kPa for very low pressures in the saturated steam tables), and report specific properties per kg in kJ (enthalpy and internal energy), kJ/K (entropy), or m<sup>3</sup> (volume).
+
+### Command-line interface
 
 Querying properties of steam and water:
 
 ```bash
-$ sandlersteam state --T 200 --P 40              
+$ sandlersteam steam state -TC 800 -P 40
 THERMODYNAMIC STATE OF UNSATURATED STEAM/WATER:
-  T = 200 C
-  P = 40 MPa
-  u = 825.55 kJ/kg
-  v = 0.0011224 m3/kg
-  s = 2.27635 kJ/kg-K
-  h = 870.4 kJ/kg
-$ sandlersteam state --T 200 --x 0.5
+T =  1073.2 K =  800.0 C
+P =  40.00 MPa =  400.00 bar
+u =  3517.8 kJ/kg =  63374.2 J/mol
+v =  0.011523 m3/kg =  0.00020759 m3/mol
+s =  6.6662 kJ/kg-K =  120.093 J/mol-K
+h =  3978.7 kJ/kg =  71677.4 J/mol
 THERMODYNAMIC STATE OF SATURATED STEAM/WATER:
-  T = 200 C
-  P = 0.0015538 MPa
-  u = 1722.98 kJ/kg
-  v = 0.0642585 m3/kg
-  s = 4.3816 kJ/kg-K
-  h = 1822.82 kJ/kg
-  quality x = 0.5
-    uL = 850.65 kJ/kg, uV = 2595.3 kJ/kg
-    vL = 0.001157 m3/kg, vV = 0.12736 m3/kg
-    sL = 2.3309 kJ/kg-K, sV = 6.4323 kJ/kg-K
-    hL = 852.45 kJ/kg, hV = 2793.2 kJ/kg
+T =  473.1 K =  200.0 C
+P =  1.55 MPa =  15.54 bar
+u =  1722.98 kJ/kg =  31039.9 J/mol
+v =  0.0642585 m3/kg =  0.00115763 m3/mol
+s =  4.3816 kJ/kg-K =  78.9358 J/mol-K
+h =  1822.82 kJ/kg =  32838.7 J/mol
+x =  0.50 kg vapor/kg
+uL =  850.65 kJ/kg =  15324.7 J/mol
+uV =  2595.3 kJ/kg =  46755.1 J/mol
+vL =  0.001157 m3/kg =  2.08437e-05 m3/mol
+vV =  0.12736 m3/kg =  0.00229443 m3/mol
+sL =  2.3309 kJ/kg-K =  41.9918 J/mol-K
+sV =  6.4323 kJ/kg-K =  115.88 J/mol-K
+hL =  852.45 kJ/kg =  15357.1 J/mol
+hV =  2793.2 kJ/kg =  50320.3 J/mol
 ```
 
 Generating LaTeX source for a table or a block:
@@ -50,7 +55,8 @@ Generating LaTeX source for a table or a block:
 $ sandlersteam latex --suphP 4.0 --output tmp.tex
 Request completed: wrote output to tmp.tex
 $ cat tmp.tex
-
+```
+```latex
 \clearpage
 \noindent THERMODYNAMIC PROPERTIES OF STEAM (Selected)\\*[1cm]
 Superheated steam:\\*[0mm]
@@ -92,7 +98,7 @@ Below we create a `State` object to define a thermodynamic state for steam at 10
 
 ```python
 >>> from sandlersteam.state import State
->>> state1 = State(T=100.0, P=0.1)
+>>> state1 = State(TC=100.0, P=0.1)
 >>> state1.h  # enthalpy in kJ/kg
 2676.2
 >>> state1.u  # internal energy in kJ/kg
@@ -105,7 +111,7 @@ Below we create a `State` object to define a thermodynamic state for steam at 10
 
 Specifying a state requires values for two independent state variables.  The state variables recognized by sandlersteam are:
 
-* `T` temperature in C
+* `T` temperature in K (alternatively `TC` for temperature in C)
 * `P` pressure in MPa
 * `u` specific internal energy in kJ/kg
 * `v` specific volume in m<sup>3</sup>/kg
@@ -137,7 +143,8 @@ One can also import the `SteamTables` dictionary from the state `state` module a
 >>> from sandlersteam.state import SteamTables as st
 >>> print(st['suph'].to_latex(P=1.0))  # generates latex for the 1 MPa block of the superheated steam table
 ```
-```
+
+```latex
 \begin{minipage}{0.6\textwidth}
 \footnotesize\vspace{5mm}
 \begin{center}
@@ -175,6 +182,10 @@ This renders as
 
 ## Release History
 
+* 0.6.0
+    * uses `StateReporter`
+    * reports in kg and molar units
+    * default input temperature in Kelvins; T in C allowed via `-TC` argument
 * 0.5.1:
     * units bugfix after cli introduction
 * 0.5.0:

@@ -4,6 +4,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from .satd import SaturatedSteamTables
 from .unsatd import UnsaturatedSteamTable
+from sandlermisc.statereporter import StateReporter
+
 
 SteamTables = dict(
     satd = SaturatedSteamTables(),
@@ -15,15 +17,17 @@ def show_available_tables(args):
     print('Available steam tables:')
     print(f'  Saturated steam tables:')
     print(f'    T-sat: T from {SteamTables["satd"].lim["T"][0]} to {SteamTables["satd"].lim["T"][1]} C')
+    print(f'             from {SteamTables["satd"].lim["T"][0] + 273.15} to {SteamTables["satd"].lim["T"][1] + 273.15} K')
     print(f'    P-sat: P from {SteamTables["satd"].lim["P"][0]} to {SteamTables["satd"].lim["P"][1]} MPa')
-    print(f'  Superheated steam tables blocks at pressures:')
+    print(f'             from {SteamTables["satd"].lim["P"][0]*10} to {SteamTables["satd"].lim["P"][1]*10} bar')
+    print(f'  Superheated steam tables blocks:\nPressure (MPa) -> Temperatures (C):')
     for p in SteamTables["suph"].uniqs['P']:
         Tlist = SteamTables["suph"].data[SteamTables["suph"].data['P'] == p]['T'].to_list()
-        print(f'    {p} MPa: ', ', '.join([str(x) for x in Tlist]))
-    print(f'  Subcooled steam tables blocks at pressures:')
+        print(f'    {p:>5.2f} ->', ', '.join([f"{x:>7.2f}" for x in Tlist]))
+    print(f'  Subcooled steam tables blocks:\nPressure (MPa) -> Temperatures (C):')
     for p in SteamTables["subc"].uniqs['P']:
         Tlist = SteamTables["subc"].data[SteamTables["subc"].data['P'] == p]['T'].to_list()
-        print(f'    {p} MPa: ', ', '.join([str(x) for x in Tlist]))
+        print(f'    {p:>5.2f} ->', ', '.join([f"{x:>6.2f}" for x in Tlist]))
 
 def state_subcommand(args):
     state_kwargs = {}
@@ -31,6 +35,8 @@ def state_subcommand(args):
         val = getattr(args, p)
         if val is not None:
             state_kwargs[p] = val
+            if p == 'T':
+                state_kwargs['TC'] = val - 273.15
     state = State(**state_kwargs)
     report = state.report()
     print(report)
@@ -42,30 +48,62 @@ class PHASE:
 LARGE=1.e99
 NEGLARGE=-LARGE
 
+G_PER_MOL = 18.01528  # g/mol for water
+KG_PER_MOL = G_PER_MOL / 1000.000  # kg/mol for water
+MOL_PER_KG = 1.0 / KG_PER_MOL  # mol/kg for water
+
 class State:
     _p = ['T','P','u','v','s','h','x']
-    _u = ['C','MPa','kJ/kg','m3/kg','kJ/kg-K','kJ/kg','']
+    _u = ['K','MPa','kJ/kg','m3/kg','kJ/kg-K','kJ/kg','']
+    _fs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .2f}']
     _sp = ['T','P','VL','VV','UL','UV','HL','HV','SL','SV']
-    _su = ['C','MPa','m3/kg','m3/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg-K','kJ/kg-K']
+    _su = ['K','MPa','m3/kg','m3/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg-K','kJ/kg-K']
+    _sfs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}']
 
     def report(self):
-        lines = []
         satd = hasattr(self, 'x') and self.x is not None
         msg = 'SATURATED ' if satd else 'UNSATURATED '
-        lines.append(f'THERMODYNAMIC STATE OF {msg}STEAM/WATER:')
-        for p, u in zip(self._p, self._u):
-            if p != 'x':
+        reporter = StateReporter()
+        for p, u, fs in zip(self._p, self._u, self._fs):
+            if p == 'T' and self.T is not None:
+                TC = self.T - 273.15
+                reporter.add_property('T', self.T, 'K', fstring=fs)
+                reporter.add_value_to_property('T', TC, 'C', fstring=fs)
+            elif p != 'x':
                 val = self.__dict__[p]
                 if val is not None:
-                    lines.append(f'  {p} = {val:.6g} {u}')
+                    reporter.add_property(p, val, u, fstring=fs)
+                    if p == 'P':
+                        val_bar = val * 10.0  # convert MPa to bar
+                        reporter.add_value_to_property('P', val_bar, 'bar', fstring=fs)
+                    if p in 'hsuv':
+                        val_spec = val * KG_PER_MOL
+                        if 'kJ' in u:
+                            val_spec = val_spec * 1000.0  # convert kJ to J
+                            spec_u = u.replace('kJ/kg', 'J/mol')
+                        else:
+                            spec_u = u.replace('/kg', '/mol')
+                        reporter.add_value_to_property(p, val_spec, spec_u, fstring=fs)
         if hasattr(self, 'x') and self.x is not None:
-            lines.append(f'  quality x = {self.x:.6g}')
-            for sp, su in zip(self._p, self._u):
+            reporter.add_property('x', self.x, 'kg vapor/kg', fstring=self._fs[-1])
+            for sp, su, sfs in zip(self._p, self._u, self._sfs):
                 if sp not in ['T','P','x']:
                     valL = self.Liquid.__dict__[sp[0].lower()]
                     valV = self.Vapor.__dict__[sp[0].lower()]
-                    lines.append(f'    {sp}L = {valL:.6g} {su}, {sp}V = {valV:.6g} {su}')
-        return '\n'.join(lines)
+                    reporter.add_property(f'{sp}L', valL, su, fstring=sfs)
+                    reporter.add_property(f'{sp}V', valV, su, fstring=sfs)
+                    if sp in 'hsuv':
+                        valL_spec = valL * KG_PER_MOL
+                        valV_spec = valV * KG_PER_MOL
+                        if 'kJ' in su:
+                            valL_spec = valL_spec * 1000.0  # convert kJ to J
+                            valV_spec = valV_spec * 1000.0  # convert kJ to J
+                            spec_u = su.replace('kJ/kg', 'J/mol')
+                        else:
+                            spec_u = su.replace('/kg', '/mol')
+                        reporter.add_value_to_property(f'{sp}L', valL_spec, spec_u, fstring=sfs)
+                        reporter.add_value_to_property(f'{sp}V', valV_spec, spec_u, fstring=sfs)
+        return f'THERMODYNAMIC STATE OF {msg}STEAM/WATER:\n' + reporter.report()
 
     def _resolve(self):
         """ 
@@ -217,7 +255,7 @@ class State:
         Y = np.array(self.satd.DF['T'][f'{p.upper()}V']) * x + np.array(self.satd.DF['T'][f'{p.upper()}L']) * (1 - x)
         X = np.array(self.satd.DF['T']['T'])
         ''' define an interpolator '''
-        f = interp1d(X,Y)
+        f = interp1d(X, Y)
         try:
             ''' interpolate the Temperature '''
             self.T = f(x)
@@ -235,14 +273,38 @@ class State:
                     self.__dict__[q] = self.x * self.Vapor.__dict__[q] + (1 - self.x) * self.Liquid.__dict__[q]
         except:
             raise Exception(f'Could not interpolate {p} = {th} at quality {x} from saturated steam table')
-        
+
+    def _scalarize(self):
+        """ Convert all properties to scalars (not np.float64) """
+        for p in self._p:
+            val = self.__dict__[p]
+            if isinstance(val, np.float64):
+                self.__dict__[p] = val.item()
+        if hasattr(self, 'x') and self.x is not None:
+            if isinstance(self.x, np.float64):
+                self.x = self.x.item()
+        if hasattr(self, 'Liquid'):
+            for k, p in self.Liquid.__dict__.items():
+                if isinstance(p, np.float64):
+                    self.Liquid.__dict__[k] = p.item()
+        if hasattr(self, 'Vapor'):
+            for k, p in self.Vapor.__dict__.items():
+                if isinstance(p, np.float64):
+                    self.Vapor.__dict__[k] = p.item()
+
     def __init__(self, **kwargs):
         self.satd = SteamTables['satd']
         self.suph = SteamTables['suph']
         self.subc = SteamTables['subc']
         for p in self._p:
             self.__dict__[p] = kwargs.get(p, None)
+        if 'T' in kwargs and not 'TC' in kwargs:
+            self.TC = self.T - 273.15
+        elif 'TC' in kwargs and not 'T' in kwargs:
+            self.TC = kwargs['TC']
+            self.T = self.TC + 273.15
         self._resolve()
+        self._scalarize()
 
 class RandomSample(State):
     def __init__(self,phase='suph',satdDOF='T',seed=None,Prange=None,Trange=None):
