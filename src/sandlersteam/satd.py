@@ -16,6 +16,7 @@ def merge_high_low_P_tables(lowP_df, highP_df):
     return merged_df
 
 class SaturatedSteamTables:
+
     data_path = files('sandlersteam') / 'resources' / 'data'
     tablesP = [data_path / 'SandlerSatdSteamTableP1.txt', 
                data_path / 'SandlerSatdSteamTableP2.txt']
@@ -24,22 +25,11 @@ class SaturatedSteamTables:
     punits = ['kPa', 'MPa']
     colorder = ['TC', 'P', 'VL', 'VV', 'UL', 'DU', 'UV', 'HL', 'DH', 'HV',
                 'SL', 'DS', 'SV']
-    colFirstTwoTexLabels = {'TC':['$T$ (C)', '$P$ (MPa)'],
-                            'P':['$P$ (MPa)', '$T$ (C)']}
-
-    colRestTexLabels = [r'$\hat{V}^L$', r'$\hat{V}^V$', 
-                        r'$\hat{U}^L$', r'$\Delta\hat{U}$', r'$\hat{U}^V$',
-                        r'$\hat{H}^L$', r'$\Delta\hat{H}$', r'$\hat{H}^V$',
-                        r'$\hat{S}^L$', r'$\Delta\hat{S}$', r'$\hat{S}^V$'
-                      ]
-    colFirstTwoTexFormatters = {'T':[pformatter,pformatter],
-                                'P':[pformatter,pformatter]}
-
     def __init__(self):
-        self.DF={'P': merge_high_low_P_tables(
+        self.DF = {'P': merge_high_low_P_tables(
                         pd.read_csv(self.tablesP[0], sep=r'\s+', header=0, index_col=None),
                         pd.read_csv(self.tablesP[1], sep=r'\s+', header=0, index_col=None))[self.colorder],
-                 'TC': merge_high_low_P_tables(
+                   'TC': merge_high_low_P_tables(
                         pd.read_csv(self.tablesT[0], sep=r'\s+', header=0, index_col=None),
                         pd.read_csv(self.tablesT[1], sep=r'\s+', header=0, index_col=None))[self.colorder]}
         self.lim = {'P':[self.DF['P']['P'].min(),self.DF['P']['P'].max()],

@@ -6,9 +6,11 @@ from .util import add_headers, my_split
 from importlib.resources import files
 
 class UnsaturatedSteamTable:
+    
     data_path = files('sandlersteam') / 'resources' / 'data'
     table_suph = data_path / 'SandlerSuphSteamTables.txt'
     table_subc = data_path / 'SandlerSubcSteamTables.txt'
+
     def __init__(self, phase: str = 'V'):
         if phase == 'V':
             with open(self.table_suph,'r') as f:

@@ -300,53 +300,53 @@ class State:
         self._scalarize()
 
 class RandomSample(State):
-    def __init__(self,phase='suph',satdDOF='TC',seed=None,Prange=None,Trange=None):
-        if phase=='satd':
-            if satdDOF=='TC':
-                sample_this=SteamTables[phase].DF['TC']
+    def __init__(self,phase='suph', satdDOF='TC', seed=None, Prange=None, Trange=None):
+        if phase == 'satd':
+            if satdDOF == 'TC':
+                sample_this = SteamTables[phase].DF['TC']
             else:
-                sample_this=SteamTables[phase].DF['P']
-        elif phase=='suph' or phase=='subc':
-            sample_this=SteamTables[phase].data
-        abs_mins={'TC':sample_this['TC'].min(),'P':sample_this['P'].min()}
-        abs_maxs={'TC':sample_this['TC'].max(),'P':sample_this['P'].max()}
-        sample=sample_this.sample(n=1,random_state=seed)
-        TC=sample['TC'].values[0]
-        P=sample['P'].values[0]
+                sample_this = SteamTables[phase].DF['P']
+        elif phase == 'suph' or phase == 'subc':
+            sample_this = SteamTables[phase].data
+        abs_mins = {'TC': sample_this['TC'].min(), 'P': sample_this['P'].min()}
+        abs_maxs = {'TC': sample_this['TC'].max(), 'P': sample_this['P'].max()}
+        sample = sample_this.sample(n=1, random_state=seed)
+        TC = sample['TC'].values[0]
+        P = sample['P'].values[0]
         if Trange and not Prange:
-            if Trange[0]<abs_mins['TC']:
+            if Trange[0] < abs_mins['TC']:
                 raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum TC in the data ({abs_mins["TC"]})')
-            if Trange[1]>abs_maxs['TC']:
+            if Trange[1] > abs_maxs['TC']:
                 raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum TC in the data ({abs_maxs["TC"]})')
-            while not Trange[0]<TC<Trange[1]:
-                sample=sample_this.sample(n=1)
-                TC=sample['TC'].values[0]
+            while not Trange[0] < TC < Trange[1]:
+                sample = sample_this.sample(n=1)
+                TC = sample['TC'].values[0]
         if Prange and not Trange:
-            if Prange[0]<abs_mins['P']:
+            if Prange[0] < abs_mins['P']:
                 raise ValueError(f'Prange[0] ({Prange[0]}) is below the minimum P in the data ({abs_mins["P"]})')
-            if Prange[1]>abs_maxs['P']:
+            if Prange[1] > abs_maxs['P']:
                 raise ValueError(f'Prange[1] ({Prange[1]}) is above the maximum P in the data ({abs_maxs["P"]})')
-            while not Prange[0]<P<Prange[1]:
-                sample=sample_this.sample(n=1)
-                P=sample['P'].values[0]
+            while not Prange[0] < P < Prange[1]:
+                sample = sample_this.sample(n=1)
+                P = sample['P'].values[0]
         if Prange and Trange:
-            if Trange[0]<abs_mins['TC']:
+            if Trange[0] < abs_mins['TC']:
                 raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum TC in the data ({abs_mins["TC"]})')
-            if Trange[1]>abs_maxs['TC']:
+            if Trange[1] > abs_maxs['TC']:
                 raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum TC in the data ({abs_maxs["TC"]})')
-            if Prange[0]<abs_mins['P']: 
+            if Prange[0] < abs_mins['P']: 
                 raise ValueError(f'Prange[0] ({Prange[0]}) is below the minimum P in the data ({abs_mins["P"]})')
-            if Prange[1]>abs_maxs['P']: 
+            if Prange[1] > abs_maxs['P']: 
                 raise ValueError(f'Prange[1] ({Prange[1]}) is above the maximum P in the data ({abs_maxs["P"]})')
-            while not Prange[0]<P<Prange[1] or not Trange[0]<TC<Trange[1]:
-                sample=sample_this.sample(n=1)
-                TC=sample['TC'].values[0]
-                P=sample['P'].values[0]
-        if phase=='satd':
-            if satdDOF=='TC':
-                super().__init__(T=TC,x=1.0)
+            while not Prange[0] < P < Prange[1] or not Trange[0] < TC < Trange[1]:
+                sample = sample_this.sample(n=1)
+                TC = sample['TC'].values[0]
+                P = sample['P'].values[0]
+        if phase == 'satd':
+            if satdDOF == 'TC':
+                super().__init__(TC=TC, x=1.0)
             else:
-                super().__init__(P=P,x=1.0)
+                super().__init__(P=P, x=1.0)
         else:
-            super().__init__(T=TC,P=P)
+            super().__init__(TC=TC, P=P)
     
