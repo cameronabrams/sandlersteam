@@ -2,14 +2,46 @@
 
 import numpy as np
 import pandas as pd
-from .util import add_headers, my_split
 from importlib.resources import files
+import io
+
+"""
+                                                                                                    1         1
+          1         2         3         4         5         6         7         8         9         0         1
+012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123    
+ 260  0.0012749  1127.9  1134.3   2.8830  0.0012645  1121.1   1133.7   2.8699  0.0012550  1114.6   1133.4   2.8576
+(0,4),(6,15),    (17,24),(25,32), (34,40),(42,51),   (53,60), (62,69), (71,77),(79,88),(90,97),(99,106),(108,114)
+"""
+def my_split(data, hder, P, Tsat, fixw=False):
+    ndfs = []
+    with io.StringIO(data) as f:
+        if fixw:
+            df = pd.read_fwf(f, colspecs=((0,4),(6,15), (17,24),(25,32),(34,40),(42,51), (53,60),(62,69),(71,77),(79,88),(90,97),(99,106),(108,114)), header=None, index_col=None)
+        else:
+            df = pd.read_csv(f, sep=r'\s+', header=None, index_col=None)
+        df.columns = hder
+        i = 1
+        for p, ts in zip(P, Tsat):
+            ndf = pd.DataFrame({'T': df['T'].copy(), 'P': np.array([p for _ in range(df.shape[0])])})
+            if ndf.iloc[0, 0] == 'Sat.':
+                ndf.iloc[0, 0] = ts
+            ndf['T'] = ndf['T'].astype(float)
+            tdf = df.iloc[:, i:i+4].copy()
+            i += 4
+            ndf = pd.concat((ndf, tdf), axis=1)
+            ndf.dropna(axis=0, inplace=True)
+            ndf.sort_values(by='T', inplace=True)
+            ndfs.append(ndf)
+    mdf = pd.concat(ndfs, axis=0)
+    return mdf
 
 class UnsaturatedSteamTable:
-    
     data_path = files('sandlersteam') / 'resources' / 'data'
     table_suph = data_path / 'SandlerSuphSteamTables.txt'
     table_subc = data_path / 'SandlerSubcSteamTables.txt'
+    _p = ['T', 'P', 'u', 'v', 's', 'h', 'x']
+    _u = ['C', 'MPa', 'kJ/kg', 'm3/kg', 'kJ/kg-K', 'kJ/kg', '']
+    _fs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .2f}']
 
     def __init__(self, phase: str = 'V'):
         if phase == 'V':
@@ -81,18 +113,18 @@ class UnsaturatedSteamTable:
         """
         retdict = {}
         xn, yn = specdict.keys()
-        assert [xn, yn] == ['TC', 'P']
+        assert [xn, yn] == ['T', 'P']
         xi, yi = specdict.values()
         df: pd.DataFrame = self.data
         dof = df.columns
         retdict = {}
-        retdict['TC'] = xi
+        retdict['T'] = xi
         retdict['P'] = yi
         tdf = df[df['P'] == yi]
         if not tdf.empty:
-            X = np.array(tdf['TC'])
+            X = np.array(tdf['T'])
             for d in dof:
-                if d not in ['TC','P']:
+                if d not in ['T','P']:
                     Y = np.array(tdf[d])
                     retdict[d] = np.interp(xi, X, Y, left=np.nan, right=np.nan)
         else:
@@ -104,12 +136,12 @@ class UnsaturatedSteamTable:
             X = np.array([PL, PR])
             LDF = df[df['P'] == PL]
             RDF = df[df['P'] == PR]
-            LT = np.array(LDF['TC'])
-            RT = np.array(RDF['TC'])
+            LT = np.array(LDF['T'])
+            RT = np.array(RDF['T'])
             CT = np.array([T for T in LT if T in RT])
             if xi in CT:
                 for d in dof:
-                    if d not in ['TC','P']:
+                    if d not in ['T','P']:
                         Y = np.array([LDF[LT == xi][d].values[0], RDF[RT == xi][d].values[0]])
                         retdict[d] = np.interp(yi, X, Y, left=np.nan, right=np.nan)
             else:
@@ -118,11 +150,11 @@ class UnsaturatedSteamTable:
                         break
                 else:
                     raise Exception(f'T {xi} not between {CT[0]} and {CT[-1]} at {yi} MPa')
-                LTDF = LDF[(LDF['TC'] == TL) | (LDF['TC'] == TR)].sort_values(by='TC')
-                RTDF = RDF[(RDF['TC'] == TL) | (RDF['TC'] == TR)].sort_values(by='TC')
+                LTDF = LDF[(LDF['T'] == TL) | (LDF['T'] == TR)].sort_values(by='T')
+                RTDF = RDF[(RDF['T'] == TL) | (RDF['T'] == TR)].sort_values(by='T')
                 iv = np.zeros(2)
                 for p in dof:
-                    if not p in ['TC','P']:
+                    if not p in ['T','P']:
                         for i in range(2):
                             Lp = LTDF[p].values[i]
                             Rp = RTDF[p].values[i]
@@ -131,65 +163,20 @@ class UnsaturatedSteamTable:
                         retdict[p] = np.interp(xi, np.array([TL, TR]), iv)
         return retdict
 
-    def to_latex(self, P):
-        # generates latex version of a P-block of the superheated/subcooled steam table
-        block  = self.data[self.data['P'] == P][['TC','V','U','H','S']]
-        if not block.empty:
-            block_floatsplit =  pd.DataFrame()
-            for c in ['TC', 'V', 'U', 'H', 'S']:
-                w = block[c].astype(int)
-                dd = np.round((block[c] - w), 10).astype(str)
-                d = []
-                block_floatsplit[c+'w'] = w
-                for a, s in zip(w, dd):
-                    if '.' in s:
-                        ss = s[1:]
-                    if ss == '.0' and c == 'TC':
-                        d.append('')
-                    else:
-                        if a == 0: # this is a fractional number
-                            while len(ss) < 6:
-                                ss = ss + '0'
-                            iss = int(ss[1:])
-                            if iss > 19999:
-                                ss = ss[:-1]
-                        elif a < 10:
-                            while len(ss) < 5:
-                                ss = ss + '0'
-                        d.append(ss)
-                    
-                block_floatsplit[c+'d'] = d
-            title = r'\noindent\begin{minipage}{0.6\textwidth}' + '\n' + r'\footnotesize\vspace{5mm}' + '\n' + r'\begin{center}' + '\n' + r'$P$ = ' + f'{P}' + r' MPa\\*[1ex]' + '\n'
-            fmts = r'>{\raggedleft}p{8mm}@{}p{5mm}' # T
-            fmts += r'>{\raggedleft}p{4mm}@{}p{10mm}' # V
-            fmts += r'>{\raggedleft}p{10mm}@{}p{3mm}' # U
-            fmts += r'>{\raggedleft}p{10mm}@{}p{3mm}' # H
-            fmts += r'>{\raggedleft\arraybackslash}p{3mm}@{}p{8mm}' # S
-            tbl = block_floatsplit.to_latex(escape=False, header=False, column_format=fmts, index=False, float_format='%g')
-            hdrs = [r'\multicolumn{2}{c}{$T$~($^\circ$C)}',
-                  r'\multicolumn{2}{c}{$\hat{V}$}',
-                  r'\multicolumn{2}{c}{$\hat{U}$}',
-                  r'\multicolumn{2}{c}{$\hat{H}$}',
-                  r'\multicolumn{2}{c}{$\hat{S}$}']
-            tbl = add_headers(tbl, [hdrs], [''])
-            return title + tbl  + r'\end{center}'+'\n'+r'\end{minipage}'+'\n'
-        else:
-            return None
-
     def TThBilinear(self,specdict):
         """
         Bilinear interpolation given T and another property 
-        (V, U, S, H, but not P)
+        (v, u, s, h, but not P)
         """
         xn, yn = specdict.keys()
-        assert xn == 'TC'
+        assert xn == 'T'
         xi, yi = specdict.values()
         df = self.data
         dof = list(df.columns)
         dof.remove(yn)
         dof.remove(xn)
         retdict = {}
-        retdict['TC'] = xi
+        retdict['T'] = xi
         retdict[yn] = yi
         LLdat = {}
         LLdat[yn] = []
@@ -197,16 +184,16 @@ class UnsaturatedSteamTable:
             LLdat[d] = []
         for P in self.uniqs['P'][::-1]:  # VUSH properties decrease with increasing P
             tdf = df[df['P'] == P]
-            X = np.array(tdf['TC'])
+            X = np.array(tdf['T'])
             Y = np.array(tdf[yn])
             if Y.min() < yi < Y.max():
                 LLdat['P'].append(P)
-                for d in 'VUSH':
+                for d in 'vush':
                     Y = np.array(tdf[d])
                     LLdat[d].append(np.interp(xi, X, Y, left=np.nan, right=np.nan))
         X = np.array(LLdat[yn])
         retdict['P'] = np.interp(yi, X, np.array(LLdat['P']))
-        for d in 'VUSH':
+        for d in 'vush':
             if d != yn:
                 retdict[d] = np.interp(yi, X, LLdat[d])
         return retdict
@@ -214,7 +201,7 @@ class UnsaturatedSteamTable:
     def PThBilinear(self,specdict):
         """
         Bilinear interpolation given P and another property 
-        (V, U, S, H, but not TC)
+        (v, u, s, h, but not T)
         """
         xn, yn = specdict.keys()
         xi, yi = specdict.values()
@@ -224,7 +211,7 @@ class UnsaturatedSteamTable:
         dof.remove(yn)
         dof.remove(xn)
         retdict = {}
-        retdict['TC'] = xi
+        retdict['T'] = xi
         retdict[yn] = yi
         if xi in self.uniqs['P']:
             tdf = df[df['P'] == xi]
@@ -255,24 +242,24 @@ class UnsaturatedSteamTable:
     
     def ThThBilinear(self,specdict):
         """
-        Bilinear interpolation given two properties from V, U, S, H 
+        Bilinear interpolation given two properties from v, u, s, h 
         (not T or P)
         """
         xn, yn =specdict.keys()
-        assert not xn in ['TC','P'] and not yn in ['TC','P']
+        assert not xn in ['T','P'] and not yn in ['T','P']
         xi, yi = specdict.values()
         df = self.data
         dof = self.data.columns
         LLdat = {}
         for d in dof:
-            if d not in ['TC','P']:
+            if d not in ['T','P']:
                 LLdat[d] = []
-        LLdat['TC'] = self.uniqs['TC']
-        for TC in LLdat['TC']:
-            tdf = df[df['TC'] == TC]
+        LLdat['T'] = self.uniqs['T']
+        for T in LLdat['T']:
+            tdf = df[df['T'] == T]
             X = np.array(tdf[xn])
             for d in dof:
-                if d!='TC' and d!=xn:
+                if d!='T' and d!=xn:
                     Y = np.array(tdf[d])
                     if Y.min() < yi < Y.max():
                         LLdat[d] = np.interp(xi, X, Y, left=np.nan, right=np.nan)
@@ -290,9 +277,9 @@ class UnsaturatedSteamTable:
         General bilinear interpolation dispatcher
         """
         xn, yn = specdict.keys()
-        if [xn, yn] == ['TC', 'P']:
+        if [xn, yn] == ['T', 'P']:
             return self.TPBilinear(specdict)
-        elif xn == 'TC':
+        elif xn == 'T':
             return self.TThBilinear(specdict)
         elif xn == 'P':
             return self.PThBilinear(specdict)
