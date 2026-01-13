@@ -102,3 +102,34 @@ class TestSteamState(TestCase):
         state.lookup()
         self.assertAlmostEqual(state.T, 241.32848, places=2)
 
+    def test_state_resolve_superheated_at_h_and_s(self):
+        state = State(h=3500.0, s=7.5)
+        state.lookup()
+        self.assertAlmostEqual(state.T, 514.56, places=2)
+        self.assertAlmostEqual(state.P, 2.0, places=2)
+
+    def test_state_resolve_saturated_liquid(self):
+        state = State(P=0.1, x=0)
+        state.lookup()
+        self.assertAlmostEqual(state.T, 99.63, places=2)
+
+        state = State(T=150, x=0)
+        state.lookup()
+        self.assertAlmostEqual(state.P, 0.4758, places=2)
+
+    def test_state_resolve_saturated_vapor(self):
+        state = State(P=0.1, x=1)
+        state.lookup()
+        self.assertAlmostEqual(state.T, 99.63, places=2)
+        self.assertAlmostEqual(state.Liquid.h, 417.46, places=2)
+        self.assertAlmostEqual(state.Vapor.h, 2675.5, places=2)
+
+        state = State(T=200, x=1)
+        state.lookup()
+        self.assertAlmostEqual(state.P, 1.5538, places=2)
+
+    def test_state_resolve_saturated_at_T_and_h(self):
+        state = State(T=120, h=1500.0)
+        state.lookup()
+        self.assertAlmostEqual(state.P, 0.19853, places=2)
+        self.assertAlmostEqual(state.x, 0.452, places=2)

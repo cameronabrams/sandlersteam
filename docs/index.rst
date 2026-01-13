@@ -25,12 +25,12 @@ Features
 
 * Command-line interface for quick calculations
 * Python API for integration into larger workflows
-* Calculation of thermodynamic properties including:
+* Reports key thermodynamic properties of water and steam, including:
   
-  * Compressibility factor (Z)
-  * Specific volume (v), specific enthalpy (h), specific entropy (s), and specific internal energy (u)
-  * Vapor pressure and saturation temperature
-  * Heat and entropy of vaporization
+  * Specific volume (v), 
+  * specific enthalpy (h),
+  * specific entropy (s), and 
+  * specific internal energy (u)
 
 Quick Start
 -----------
@@ -41,14 +41,14 @@ Installation::
 
 Basic usage from the command line::
 
-   sandlersteam state -TC 800 -P 40
+   sandlersteam state -T 800 -P 40
 
 Basic usage from Python:
 
 .. code-block:: python
 
    from sandlersteam.state import State
-   state = State(TC=800, P=40)
+   state = State(T=800, P=40).lookup()
    print(f"Specific volume: {state.v} m³/kg")
 
 Contents
@@ -62,7 +62,6 @@ Contents
    quickstart
    cli
    examples
-   theory
 
 .. toctree::
    :maxdepth: 2

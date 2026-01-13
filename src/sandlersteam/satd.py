@@ -45,6 +45,9 @@ class SaturatedSteamTables:
                         pd.read_csv(self.tablesT[1], sep=r'\s+', header=0, index_col=None))[self.colorder]}
         self.lim = {'P':[self.DF['P']['P'].min(),self.DF['P']['P'].max()],
                     'T':[self.DF['T']['T'].min(),self.DF['T']['T'].max()]}
+        for p in ['vL', 'vV', 'uL', 'uV', 'hL', 'hV', 'sL', 'sV']:
+            self.lim[p] = [min(self.DF['P'][p].min(), self.DF['T'][p].min()),
+                           max(self.DF['P'][p].max(), self.DF['T'][p].max())]
         self.interpolators = {}
         for bp, cp in zip(['P', 'T'], ['T', 'P']):
             self.interpolators[bp] = {}

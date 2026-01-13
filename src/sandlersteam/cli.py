@@ -7,9 +7,9 @@ import numpy as np
 
 from importlib.metadata import version
 
-from .request import request_subcommand
-from .state import State
+from .state import State, get_tables
 from sandlermisc.statereporter import StateReporter
+
 
 banner = r"""
    ____             ____       
@@ -23,63 +23,73 @@ banner = r"""
 
 """
 
-def regularize_T(args):
-    # args is a namespace in which TC and TK must agree
-    if args.TK is not None:
-        args.TC = args.TK - 273.15
-    elif args.TC is not None:
-        args.TK = args.TC + 273.15
-    else:
-        raise ValueError('Either temperature in K or C must be specified')
-
 def show_available_tables_subcommand(args):
+    SteamTables = get_tables()
     print(f'  Saturated steam:')
-    print(f'    T-sat: T from {SteamTables["satd"].lim["TC"][0]} to {SteamTables["satd"].lim["TC"][1]} C')
-    print(f'             from {np.round(SteamTables["satd"].lim["TC"][0] + 273.15,2)} to {np.round(SteamTables["satd"].lim["TC"][1] + 273.15,2)} K')
+    print(f'    T-sat: T from {SteamTables["satd"].lim["T"][0]} to {SteamTables["satd"].lim["T"][1]} C')
+    print(f'             from {np.round(SteamTables["satd"].lim["T"][0] + 273.15,2)} to {np.round(SteamTables["satd"].lim["T"][1] + 273.15,2)} K')
     print(f'    P-sat: P from {SteamTables["satd"].lim["P"][0]} to {SteamTables["satd"].lim["P"][1]} MPa')
     print(f'             from {np.round(SteamTables["satd"].lim["P"][0]*10,2)} to {np.round(SteamTables["satd"].lim["P"][1]*10,2)} bar')
     print(f'  Superheated steam blocks:\nPressure (MPa) -> Temperatures (C):')
     for p in SteamTables["suph"].uniqs['P']:
-        Tlist = SteamTables["suph"].data[SteamTables["suph"].data['P'] == p]['TC'].to_list()
+        Tlist = SteamTables["suph"].data[SteamTables["suph"].data['P'] == p]['T'].to_list()
         print(f'    {p:>5.2f} ->', ', '.join([f"{x:>7.2f}" for x in Tlist]))
     print(f'  Subcooled liquid blocks:\nPressure (MPa) -> Temperatures (C):')
     for p in SteamTables["subc"].uniqs['P']:
-        Tlist = SteamTables["subc"].data[SteamTables["subc"].data['P'] == p]['TC'].to_list()
+        Tlist = SteamTables["subc"].data[SteamTables["subc"].data['P'] == p]['T'].to_list()
         print(f'    {p:>5.2f} ->', ', '.join([f"{x:>6.2f}" for x in Tlist]))
 
 def state_subcommand(args):
     state_kwargs = {}
-    for p in State._p:
+    for p in State._STATE_VAR_FIELDS.union({'x'}):
         val = getattr(args, p)
         if val is not None:
             state_kwargs[p] = val
-    state = State(**state_kwargs)
+    state = State(**state_kwargs).lookup()
     report = state.report()
     print(report)
 
-def request_subcommand(args):
-    R = Request()
-    if args.satdP:
-        R.register('satdP')
-    if args.satdT:
-        R.register('satdT')
-    if args.suphP:
-        for P in args.suphP:
-            R.register(suphP=P)
-    if args.subcP:
-        for P in args.subcP:
-            R.register(subcP=P)
-    with args.output as f:
-        f.write(R.to_latex())
-    print(f'Request completed: wrote output to {args.output.name if args.output else "stdout"}')
-
+def delta_subcommand(args):
+    state1_kwargs = {}
+    state2_kwargs = {}
+    for p in State._STATE_VAR_FIELDS.union({'x'}):
+        val1 = getattr(args, f'{p}1')
+        val2 = getattr(args, f'{p}2')
+        if val1 is not None:
+            state1_kwargs[p] = val1
+        if val2 is not None:
+            state2_kwargs[p] = val2
+    state1 = State(**state1_kwargs).lookup()
+    state2 = State(**state2_kwargs).lookup()
+    delta_props = state1.delta(state2)
+    delta_State = StateReporter({})
+    # print('Property differences (state2 - state1):')
+    for prop in State._STATE_VAR_ORDERED_FIELDS + ['Pv']:
+        if prop in delta_props:
+            value = delta_props[prop]
+            delta_State.add_property(f'Δ{prop}', state1.get_formatter(prop).format(value), state1.get_unit(prop), fstring=None)
+    state1_report = state1.report()
+    state2_report = state2.report()
+    print(f"State-change calculations for water/steam:")
+    if args.show_states:
+        print()
+        two_states = ["State 1:                       State 2:"]
+        nlines1 = len(state1_report.splitlines())
+        nlines2 = len(state2_report.splitlines())
+        nlines = max(nlines1, nlines2)
+        if nlines1 < nlines:
+            state1_report += '\n' * (nlines - nlines1 + 1)
+        if nlines2 < nlines:
+            state2_report += '\n' * (nlines - nlines2 + 1)
+        for line1, line2 in zip(state1_report.splitlines(), state2_report.splitlines()):
+            two_states.append(f"{line1:<26s}     {line2}")
+        print("\n".join(two_states))
+        print()
+        print("Property changes:")
+    print(delta_State.report())
 
 def cli():
     subcommands = {
-        'latex': dict(
-            func = request_subcommand,
-            help = 'make a latex steam table request'
-        ),
         'avail': dict(
             func = show_available_tables_subcommand,
             help = 'show available steam tables locations (T, P ranges)'
@@ -87,6 +97,10 @@ def cli():
         'state': dict(
             func = state_subcommand,
             help = 'display thermodynamic state for given inputs'
+        ),
+        'delta': dict(
+            func = delta_subcommand,
+            help = 'calculate property differences between two states'
         )
     }
     parser = ap.ArgumentParser(
@@ -129,50 +143,16 @@ def cli():
             help=specs['help']
         )
 
-    command_parsers['latex'].add_argument(
-        '-o',
-        '--output',
-        type=ap.FileType('w'),
-        default=None,
-        help='output file (default: stdout)'
-    )
-    command_parsers['latex'].add_argument(
-        '--suphP',
-        type=float,
-        action='append',
-        help='add superheated steam table at pressure P (MPa)'
-    )
-    command_parsers['latex'].add_argument(
-        '--subcP',
-        type=float,
-        action='append',
-        help='add subcooled liquid table at pressure P (MPa)'
-    )
-    command_parsers['latex'].add_argument(
-        '--satdP',
-        action='store_true',
-        help='include saturated steam table by pressure'
-    )
-    command_parsers['latex'].add_argument(
-        '--satdT',
-        action='store_true',
-        help='include saturated steam table by temperature'
-    )
-
     state_args = [
         ('P', 'pressure', 'pressure in MPa', float, True),
-        ('T', 'temperature', 'temperature in K', float, True),
+        ('T', 'temperature', 'temperature in C', float, True),
         ('x', 'quality', 'vapor quality (0 to 1)', float, False),
         ('v', 'specific_volume', 'specific volume in m3/kg', float, False),
         ('u', 'internal_energy', 'internal energy in kJ/kg', float, False),
         ('h', 'enthalpy', 'enthalpy in kJ/kg', float, False),
         ('s', 'entropy', 'entropy in kJ/kg-K', float, False),]
-    extra_args = [
-        ('TC', 'temperatureC', 'temperature in C (if T not specified)', float, True),
-    ]
-    for prop, longname, explanation, tp, _ in state_args + extra_args:
-        if prop=='T':
-            prop = 'TK'
+
+    for prop, longname, explanation, tp, _ in state_args:
         command_parsers['state'].add_argument(
             f'-{prop}',
             f'--{longname}',
@@ -180,15 +160,34 @@ def cli():
             type=tp,
             help=f'{explanation.replace("_"," ")}'
         )
+        command_parsers['delta'].add_argument(
+            f'-{prop}1',
+            f'--{longname}1',
+            dest=f'{prop}1',
+            type=tp,
+            help=f'{explanation.replace("_"," ")} for state 1'
+        )
+        command_parsers['delta'].add_argument(
+            f'-{prop}2',
+            f'--{longname}2',
+            dest=f'{prop}2',
+            type=tp,
+            help=f'{explanation.replace("_"," ")} for state 2'
+        )
+    command_parsers['delta'].add_argument(
+        '--show-states',
+        default=False,
+        action=ap.BooleanOptionalAction,
+        help='also show full states for both state 1 and state 2'
+    )
     args = parser.parse_args()
     if args.func == state_subcommand:
-        regularize_T(args)
         nprops = 0
         for prop, _, _, _, _ in state_args:
             if hasattr(args, prop) and getattr(args, prop) is not None:
                 nprops += 1
         if nprops > 2:
-            parser.error('At most two of P, T, x, v, u, h, and s may be specified for "state" subcommand')
+            parser.error('At most two of P, T, x, v, u, h, s, and x may be specified for "state" subcommand')
 
     if args.banner:
         print(banner)

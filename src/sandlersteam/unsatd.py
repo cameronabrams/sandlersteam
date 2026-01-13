@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 from importlib.resources import files
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 """
                                                                                                     1         1
@@ -12,7 +15,28 @@ import io
  260  0.0012749  1127.9  1134.3   2.8830  0.0012645  1121.1   1133.7   2.8699  0.0012550  1114.6   1133.4   2.8576
 (0,4),(6,15),    (17,24),(25,32), (34,40),(42,51),   (53,60), (62,69), (71,77),(79,88),(90,97),(99,106),(108,114)
 """
-def my_split(data, hder, P, Tsat, fixw=False):
+def my_split(data: str, hder: list[str], P: list[float], Tsat: list[float | None], fixw: bool = False) -> pd.DataFrame:
+    """
+    helper function to split data blocks into dataframes
+
+    Parameters
+    ----------
+    data : str
+        multiline string data block
+    hder : list[str]
+        list of header strings
+    P : list[float]
+        list of pressures corresponding to data block
+    Tsat : list[float | None]
+        list of saturation temperatures corresponding to data block
+    fixw : bool
+        whether to use fixed-width format (True for saturated liquid tables)
+    
+    Returns
+    -------
+    pd.DataFrame
+        concatenated dataframe of all data blocks
+    """
     ndfs = []
     with io.StringIO(data) as f:
         if fixw:
@@ -35,21 +59,42 @@ def my_split(data, hder, P, Tsat, fixw=False):
     mdf = pd.concat(ndfs, axis=0)
     return mdf
 
-class UnsaturatedSteamTable:
+class UnsaturatedSteamTables:
+    """
+    Unsaturated steam tables based on Sandler's Steam Tables
+    Data from:
+    Sandler, S. I. (2017). Chemical, biochemical, and engineering
+    thermodynamics 5th ed. John Wiley & Sons.
+    
+    self.data is a dataframe with columns:
+    T (C), P (MPa), u (kJ/kg), v (m3/kg), s (kJ/kg-K), h (kJ/kg)
+
+    and it contains all the data in the unsaturated steam tables
+    1. Unsaturated superheated steam table (vapor phase)
+    2. Unsaturated subcooled steam table (liquid phase)
+
+    """
     data_path = files('sandlersteam') / 'resources' / 'data'
     table_suph = data_path / 'SandlerSuphSteamTables.txt'
     table_subc = data_path / 'SandlerSubcSteamTables.txt'
+
+    def __init__(self):
+        self.suph = UnsaturatedSteamTable('V', self.table_suph)
+        self.subc = UnsaturatedSteamTable('L', self.table_subc)
+
+class UnsaturatedSteamTable:
+    """
+    Unsaturated steam table for either superheated vapor (phase='V')
+    or subcooled liquid (phase='L')
+    """
     _p = ['T', 'P', 'u', 'v', 's', 'h', 'x']
     _u = ['C', 'MPa', 'kJ/kg', 'm3/kg', 'kJ/kg-K', 'kJ/kg', '']
     _fs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .2f}']
 
-    def __init__(self, phase: str = 'V'):
-        if phase == 'V':
-            with open(self.table_suph,'r') as f:
-                lines = f.read().split('\n')
-        elif phase == 'L':
-            with open(self.table_subc,'r') as f:
-                lines = f.read().split('\n')
+    def __init__(self, phase: str, table_path: str):
+        with open(table_path,'r') as f:
+            lines = f.read().split('\n')
+
         # identify header
         hder = lines[0].split()
         # identify lines with pressures
@@ -106,6 +151,7 @@ class UnsaturatedSteamTable:
         self.uniqs = {}
         for d in dof:
             self.uniqs[d] = np.sort(np.array(list(set(self.data[d].to_list()))))
+        # logger.debug(f'{self.data.head()}')
 
     def TPBilinear(self, specdict: dict):
         """
@@ -240,39 +286,79 @@ class UnsaturatedSteamTable:
                 retdict[pp] = np.interp(xi, X, Y, left=np.nan, right=np.nan)
         return retdict
     
-    def ThThBilinear(self,specdict):
+    def _ordered_th_th(self, specdict):
+        """
+        Ensure that the two properties are ordered consistently
+        """
+        xn, yn = specdict.keys()
+        if xn > yn:
+            specdict = {yn: specdict[yn], xn: specdict[xn]}
+        return specdict
+
+    def ThThBilinear(self, specdict: dict[str, float]) -> dict[str, float]:
         """
         Bilinear interpolation given two properties from v, u, s, h 
         (not T or P)
         """
-        xn, yn =specdict.keys()
+        specdict = self._ordered_th_th(specdict)
+#        logger.debug(f'ThThBilinear called with specs: {specdict}')
+        xn, yn = specdict.keys()
         assert not xn in ['T','P'] and not yn in ['T','P']
         xi, yi = specdict.values()
-        df = self.data
-        dof = self.data.columns
-        LLdat = {}
-        for d in dof:
-            if d not in ['T','P']:
-                LLdat[d] = []
-        LLdat['T'] = self.uniqs['T']
-        for T in LLdat['T']:
-            tdf = df[df['T'] == T]
-            X = np.array(tdf[xn])
-            for d in dof:
-                if d!='T' and d!=xn:
-                    Y = np.array(tdf[d])
-                    if Y.min() < yi < Y.max():
-                        LLdat[d] = np.interp(xi, X, Y, left=np.nan, right=np.nan)
-        X = LLdat[yn]
+#        logger.debug(f'First interpolant is {xn}={xi}, second is {yn}={yi}')
+        Puniqs = self.uniqs['P']
+        # for each unique Pressure, determine the interpolated row for the xn value xi
+        good_rows = []
+        for P in Puniqs:
+            # logger.debug(f'Checking P={P} MPa')
+            pdf = self.data[self.data['P'] == P]
+            X = np.array(pdf[xn])
+            T= np.array(pdf['T'])
+            if X.min() < xi < X.max():
+                # logger.debug(f'At P={P} MPa, {xn}={xi} is between {X.min()} and {X.max()}')
+                retdict = self.PThBilinear({'P': P, xn: xi})
+                # logger.debug(f'  Interpolated at P={P} MPa: T={retdict["T"]}, {yn}={retdict[yn]}')
+                if retdict[yn] == yi:
+                    # logger.debug(f'  Exact match found at P={P} MPa: {xn}={xi}, {yn}={yi}')
+                    return retdict
+                else:
+                    good_rows.append((P, retdict['T'], retdict[yn]))
+            # else:
+            #     logger.debug(f'At P={P} MPa, {xn}={xi} is NOT between {X.min()} and {X.max()}')
+
+        # logger.debug(f'Good rows collected: {good_rows}')
+        if len(good_rows) < 2:
+            raise Exception(f'Not enough data to interpolate {xn}={xi}, {yn}={yi}')
+
+        # now interpolate between the good rows to find the target yi
+        PL, TL, ynL = None, None, None
+        PR, TR, ynR = None, None, None
+        for i in range(len(good_rows)-1):
+            P1, T1, y1 = good_rows[i]
+            P2, T2, y2 = good_rows[i+1]
+            if (y1 < yi < y2) or (y2 < yi < y1):
+                PL, TL, ynL = P1, T1, y1
+                PR, TR, ynR = P2, T2, y2
+                # logger.debug(f'Bracketing rows found between P={PL} MPa and P={PR} MPa')
+                break
+        if PL is None:
+            raise Exception(f'Could not find bracketing rows for {yn}={yi}')
         retdict = {}
         retdict[xn] = xi
         retdict[yn] = yi
-        for d in dof:
-            if d!=xn and d!=yn:
-                retdict[d] = np.interp(yi, X, LLdat[d])
+        retdict['P'] = np.interp(yi, np.array([ynL, ynR]), np.array([PL, PR]))
+        retdict['T'] = np.interp(yi, np.array([ynL, ynR]), np.array([TL, TR]))
+        for d in ['v','u','s','h']:
+            if d != xn and d != yn:
+                # logger.debug(f'Interpolating {d} at {xi} {xn} and {yi} {yn}')
+                retdict[d] = np.interp(yi, np.array([ynL, ynR]),
+                                      np.array([self.PThBilinear({'P': PL, xn: xi})[d],
+                                                self.PThBilinear({'P': PR, xn: xi})[d]]))
+                # logger.debug(f'Interpolated {d} = {retdict[d]}')
+        
         return retdict
 
-    def Bilinear(self, specdict):
+    def Bilinear(self, specdict: dict[str, float]) -> dict[str, float]:
         """
         General bilinear interpolation dispatcher
         """

@@ -30,19 +30,49 @@ Let's calculate the molar volume of methane at 400 K and 0.5 MPa using the Peng-
 From the Command Line
 ~~~~~~~~~~~~~~~~~~~~~
 
+Unsaturated steam/water state calculations:
+
 .. code-block:: bash
 
-   sandlersteam state -TC 400 -P 0.5
+   sandlersteam state -T 400 -P 1.1
 
 Output::
 
-   THERMODYNAMIC STATE OF UNSATURATED STEAM/WATER:
-   TC =  400.0 C =  673.1 K
-   P  =  0.50 MPa =  5.00 bar
-   u  =  2963.2 kJ/kg =  53382.9 J/mol
-   v  =  0.6173 m3/kg =  0.0111208 m3/mol
-   s  =  7.7938 kJ/kg-K =  140.407 J/mol-K
-   h  =  3271.9 kJ/kg =  58944.2 J/mol
+   T  =   400 C
+   P  =   1.1 MPa
+   v  =  0.2807 m3/kg
+   s  =  7.42125 kJ/kg-K
+   h  =  3262.3 kJ/kg
+   u  =  2956.1 kJ/kg
+   Pv =  308.77 kJ/kg
+
+
+Saturated steam/water state calculations:
+
+.. code-block:: bash
+
+   sandlersteam state -P 4.0 -x 0.9
+
+Output::
+
+   T   =  250.4 C
+   P   =     4 MPa
+   v   =  0.0449272 m3/kg
+   s   =  5.74273 kJ/kg-K
+   h   =  2629.99 kJ/kg
+   u   =  2450.3 kJ/kg
+   Pv  =  179.709 kJ/kg
+   x   = 0.9 kg vapor/kg total
+   vL  =  0.001252 m3/kg
+   sL  =  2.7964 kJ/kg-K
+   hL  =  1087.31 kJ/kg
+   uL  =  1082.31 kJ/kg
+   PvL =  5.008 kJ/kg
+   vV  =  0.04978 m3/kg
+   sV  =  6.0701 kJ/kg-K
+   hV  =  2801.4 kJ/kg
+   uV  =  2602.3 kJ/kg
+   PvV =  199.12 kJ/kg
 
 From Python
 ~~~~~~~~~~~
@@ -50,26 +80,10 @@ From Python
 .. code-block:: python
 
    from sandlersteam.state import State
-   state1 = State(TC=200.0, P=0.1)
-   print(f"Specific volume: {state1.v} m³/kg")   
+   state1 = State(T=200.0, P=0.1).lookup()
 
-You need not set the state variables (T, P) during initialization; you can also just directly assign them later:
+   print(f"Specific volume: {state1.v} {state1.volume_units}/{state1.mass_units}")   
 
-.. code-block:: python
-
-   from sandlersteam import PengRobinsonEOS
-   # Create EOS object without state and without compound
-   pr = PengRobinsonEOS()
-   
-   # Set compound later; .set_compound returns self for convenience
-   pr_methane = pr.set_compound('methane')
-   
-   # Set state later
-   pr_methane.T = 400
-   pr_methane.P = 0.5
-   
-   # Now access properties as before
-   print(f"Molar volume: {', '.join([f'{v: 6g}' for v in pr_methane.v])} m³/mol")
 
 State-Change Calculations
 -------------------------
@@ -81,26 +95,29 @@ From the Command Line
 
 .. code-block:: bash
 
-   sandlersteam delta -T1 350 -P1 7.5 -T2 400 -P2 15.5 -n methane -eos pr --show-states
+   sandlersteam delta -P1 4.0 -T1 800 -P2 4.5 -T2 1200 --show-states
 
 Output::
 
-   State-change calculations for methane using Peng-Robinson Equation of State:
+   State-change calculations for water/steam:
 
    State 1:                       State 2:
-   T    =  350.00 K               T    =  400.00 K
-   P    =  7.50 MPa               P    =  15.50 MPa
-   Z    =  0.92619                Z    =  0.950871
-   v    =  0.000359369 m3/mol     v    =  0.000204025 m3/mol
-   h    =  929.35 J/mol           h    =  2501.21 J/mol
-   s    = -32.095 J/mol-K         s    = -33.5449 J/mol-K
-   hdep = -989.935 J/mol          hdep = -1412.32 J/mol
-   sdep = -2.12621 J/mol-K        sdep = -2.86197 J/mol-K
+   T  =   800 C                   T  =  1200 C
+   P  =     4 MPa                 P  =   4.5 MPa
+   v  =  0.12287 m3/kg            v  =  0.15098 m3/kg
+   s  =  7.8502 kJ/kg-K           s  =  8.5825 kJ/kg-K
+   h  =  4141.5 kJ/kg             h  =  5136.9 kJ/kg
+   u  =   3650 kJ/kg              u  =  4457.5 kJ/kg
+   Pv =  491.48 kJ/kg             Pv =  679.41 kJ/kg
 
    Property changes:
-   Δh =  1571.86 J/mol
-   Δs = -1.44983 J/mol-K
-   Δu =  1104.74 J/mol
+   ΔT  =   400 C
+   ΔP  =   0.5 MPa
+   Δv  =  0.02811 m3/kg
+   Δs  =  0.7323 kJ/kg-K
+   Δh  =  995.4 kJ/kg
+   Δu  =  807.5 kJ/kg
+   ΔPv =  187.93 kJ/kg
 
 From Python
 ~~~~~~~~~~~
@@ -109,66 +126,24 @@ State-change calculations can be performed by creating two EOS objects represent
 
 .. code-block:: python
 
-   from sandlersteam import PengRobinsonEOS
+   from sandlersteam.state import State
    
    # State 1
-   pr_methane1 = PengRobinsonEOS(T=350, P=7.5).set_compound('methane')
+   state1 = State(T=350, P=7.5).lookup()
    
    # State 2
-   pr_methane2 = PengRobinsonEOS(T=400, P=15.5).set_compound('methane')
+   state2 = State(T=400, P=15.5).lookup()
    
    # Calculate property differences using built-in methods
-   delta_h = pr_methane1.delta_h(pr_methane2)
-   delta_s = pr_methane1.delta_s(pr_methane2)
-   delta_u = pr_methane1.delta_u(pr_methane2)
+   deltas = state1.delta(state2)
    
-   print(f"Δh = {', '.join([f'{dh: 7g}' for dh in delta_h])} J/mol")
-   print(f"Δs = {', '.join([f'{ds: 7g}' for ds in delta_s])} J/mol-K")
-   print(f"Δu = {', '.join([f'{du: 7g}' for du in delta_u])} J/mol")
-
-Available Equations of State
------------------------------
-
-Ideal gas
-~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from sandlersteam import IdealGasEOS
-   
-   ig = IdealGasEOS()
-
-van der Waals
-~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from sandlersteam import VanDerWaalsEOS
-   
-   vdw_methane = VanDerWaalsEOS().set_compound('methane')
-
-Peng-Robinson
-~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from sandlersteam import PengRobinsonEOS
-   
-   pr_benzene = PengRobinsonEOS().set_compound('benzene')
-
-Soave-Redlich-Kwong
-~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from sandlersteam import SoaveRedlichKwongEOS
-   
-   srk_ethanol = SoaveRedlichKwongEOS().set_compound('ethanol')
+   print(f"Δh = {deltas['h']:7g} {state1.energy_unit}/{state1.mass_unit}")
+   print(f"Δs = {deltas['s']:7g} {state1.energy_unit}/{state1.mass_unit}-K")
+   print(f"Δu = {deltas['u']:7g} {state1.energy_unit}/{state1.mass_unit}")
 
 Next Steps
 ----------
 
 * Learn more about the :doc:`cli` for advanced command-line usage
 * Explore :doc:`examples` for more complex calculations
-* Read about the :doc:`theory` behind cubic equations of state
 * Check the :doc:`api/API` for complete API documentation

@@ -4,7 +4,7 @@ import numpy as np
 from dataclasses import dataclass, field, fields
 from scipy.interpolate import interp1d
 from .satd import SaturatedSteamTables
-from .unsatd import UnsaturatedSteamTable
+from .unsatd import UnsaturatedSteamTables
 from sandlermisc import statereporter
 
 import logging
@@ -19,8 +19,11 @@ def get_tables():
     if _instance is None:
         _instance = dict(
             satd = SaturatedSteamTables(),
-            suph = UnsaturatedSteamTable('V'),
-            subc = UnsaturatedSteamTable('L')
+            unsatd = UnsaturatedSteamTables()
+        )
+        _instance.update(
+            suph = _instance['unsatd'].suph,
+            subc = _instance['unsatd'].subc
         )
     return _instance
 
@@ -44,8 +47,11 @@ class State:
     _input_state: dict | None = field(default=None, init=False, repr=False)
     """ Snapshot of input field values for cache validation """
 
-    _STATE_VAR_FIELDS = frozenset(['T', 'P', 'v', 's', 'h', 'u'])
+    _STATE_VAR_ORDERED_FIELDS = ['T', 'P', 'v', 's', 'h', 'u']
+
+    _STATE_VAR_FIELDS = frozenset(_STATE_VAR_ORDERED_FIELDS)
     """ Fields that define the input state for caching purposes """
+
     _UNIT_FIELDS = frozenset(['mass_unit', 'temperature_unit', 'pressure_unit', 'volume_unit'])
     """ Fields that define the units for caching purposes """
 
@@ -119,42 +125,138 @@ class State:
             'u': f'{self.energy_unit}/{self.mass_unit}',
             'h': f'{self.energy_unit}/{self.mass_unit}',
             's': f'{self.energy_unit}/{self.mass_unit}-K',
+            'Pv': f'{self.energy_unit}/{self.mass_unit}',
         }
         return unit_map.get(field_name)
+    
+    def get_formatter(self, field_name: str) -> str:
+        """Get the formatter for a given field"""
+        formatter_map = {
+            'P': '{: 5g}',
+            'T': '{: 5g}',
+            'x': '{: 5g}',
+            'v': '{: 6g}',
+            'u': '{: 6g}',
+            'h': '{: 6g}',
+            's': '{: 6g}',
+            'Pv': '{: 6g}',
+        }
+        return formatter_map.get(field_name)
+
+    def _to_table_units(self, x: float, units: str):
+        """
+        convert quantity x from specified units to table units (MPa, C, kJ/kg, m3/kg, kJ/kg-K)
+        """
+        match units:
+            case 'C':
+                return x
+            case 'K':
+                return x - 273.15
+            case 'F':
+                return (x - 32.0) * 5.0 / 9.0
+            case 'MPa':
+                return x
+            case 'kPa':
+                return x / 1000.0
+            case 'bar':
+                return x / 10.0
+            case 'atm':
+                return x / 10.1325
+            case 'kJ/kg':
+                return x
+            case 'J/kg':
+                return x / 1000.0
+            case 'J/mol':
+                return x / 1000.0 * MOL_PER_KG
+            case 'm3/kg':
+                return x
+            case 'm3/mol':
+                return x * MOL_PER_KG
+            case 'kJ/kg-K':
+                return x
+            case 'J/kg-K':
+                return x / 1000.0
+            case 'J/mol-K':
+                return x / 1000.0 * MOL_PER_KG
+            case _:
+                raise ValueError(f'Unsupported unit conversion from {units}')
+    
+    def _from_table_units(self, x: float, specified_unit: str):
+        """ convert quantity x from table units (MPa, C, kJ/kg, m3/kg, kJ/kg-K) to specified units """
+        match specified_unit:
+            case 'C':
+                return x
+            case 'K':
+                return x + 273.15
+            case 'F':
+                return x * 9.0 / 5.0 + 32.0
+            case 'MPa':
+                return x
+            case 'kPa':
+                return x * 1000.0
+            case 'bar':
+                return x * 10.0
+            case 'atm':
+                return x * 10.1325
+            case 'kJ/kg':
+                return x
+            case 'J/kg':
+                return x * 1000.0
+            case 'J/mol':
+                return x * 1000.0 / MOL_PER_KG
+            case 'm3/kg':
+                return x
+            case 'm3/mol':
+                return x / MOL_PER_KG
+            case 'kJ/kg-K':
+                return x
+            case 'J/kg-K':
+                return x * 1000.0
+            case 'J/mol-K':
+                return x * 1000.0 / MOL_PER_KG
+            case _:
+                raise ValueError(f'Unsupported unit conversion to {specified_unit}')
 
     @property
     def TC(self):
         """ Temperature in degrees Celsius """
-        match self.temperature_unit:
-            case 'C':
-                return self.T
-            case 'K':
-                return self.T - 273.15
-            case 'F':
-                return (self.T - 32.0) * 5.0 / 9.0
-            case _:
-                raise ValueError(f'Unsupported temperature unit: {self.temperature_unit}')
+        return self._to_table_units(self.T, self.temperature_unit)
 
     @property
     def PMPa(self):
         """ Pressure in MPa """
-        match self.pressure_unit:
-            case 'MPa':
-                return self.P
-            case 'kPa':
-                return self.P / 1000.0
-            case 'bar':
-                return self.P / 10.0
-            case 'atm':
-                return self.P / 10.1325
-            case _:
-                raise ValueError(f'Unsupported pressure unit: {self.pressure_unit}')
+        return self._to_table_units(self.P, self.pressure_unit)
+
+    @property
+    def vm3KG(self):
+        """ Specific volume in m3/kg """
+        return self._to_table_units(self.v, f'{self.volume_unit}/{self.mass_unit}')
+
+    @property
+    def hkJKG(self):
+        """ Specific enthalpy in kJ/kg """
+        return self._to_table_units(self.h, f'{self.energy_unit}/{self.mass_unit}')
+    
+    @property
+    def ukJKG(self):
+        """ Specific internal energy in kJ/kg """
+        return self._to_table_units(self.u, f'{self.energy_unit}/{self.mass_unit}')
+    
+    @property
+    def skJKGK(self):
+        """ Specific entropy in kJ/kg-K """
+        return self._to_table_units(self.s, f'{self.energy_unit}/{self.mass_unit}-K')
+
+    @property
+    def Pv(self):
+        """ Pressure * specific volume in kJ/kg """
+        return self._from_table_units(self.PMPa * self.vm3KG * 1000.0, "kJ/kg")  # in kJ/kg
 
     def lookup(self):
         """ Lookup and compute all properties based on current inputs """
         if not 'lookup' in self._cache:
             self._cache['lookup'] = self._resolve()
-        return self._cache['lookup']
+        return self
 
     def _get_statespec(self):
         """ Get current state specification """
@@ -223,50 +325,23 @@ class State:
         self._scalarize()
         self._input_state = self._get_current_input_state()
 
-    # def report(self):
-    #     satd = hasattr(self, 'x') and self.x is not None
-    #     msg = 'SATURATED ' if satd else 'UNSATURATED '
-    #     reporter = statereporter.StateReporter()
-    #     for p, u, fs in zip(self._p, self._u, self._fs):
-    #         if p == 'TC' and self.TC is not None:
-    #             TK = self.TC + 273.15
-    #             reporter.add_property('TC', self.TC, 'C', fstring=fs)
-    #             reporter.add_value_to_property('TC', TK, 'K', fstring=fs)
-    #         elif p != 'x':
-    #             val = self.__dict__[p]
-    #             if val is not None:
-    #                 reporter.add_property(p, val, u, fstring=fs)
-    #                 if p == 'P':
-    #                     val_bar = val * 10.0  # convert MPa to bar
-    #                     reporter.add_value_to_property('P', val_bar, 'bar', fstring=fs)
-    #                 if p in 'hsuv':
-    #                     val_spec = val * KG_PER_MOL
-    #                     if 'kJ' in u:
-    #                         val_spec = val_spec * 1000.0  # convert kJ to J
-    #                         spec_u = u.replace('kJ/kg', 'J/mol')
-    #                     else:
-    #                         spec_u = u.replace('/kg', '/mol')
-    #                     reporter.add_value_to_property(p, val_spec, spec_u, fstring=fs)
-    #     if hasattr(self, 'x') and self.x is not None:
-    #         reporter.add_property('x', self.x, 'kg vapor/kg', fstring=self._fs[-1])
-    #         for sp, su, sfs in zip(self._p, self._u, self._sfs):
-    #             if sp not in ['TC','P','x']:
-    #                 valL = self.Liquid.__dict__[sp[0].lower()]
-    #                 valV = self.Vapor.__dict__[sp[0].lower()]
-    #                 reporter.add_property(f'{sp}L', valL, su, fstring=sfs)
-    #                 reporter.add_property(f'{sp}V', valV, su, fstring=sfs)
-    #                 if sp in 'hsuv':
-    #                     valL_spec = valL * KG_PER_MOL
-    #                     valV_spec = valV * KG_PER_MOL
-    #                     if 'kJ' in su:
-    #                         valL_spec = valL_spec * 1000.0  # convert kJ to J
-    #                         valV_spec = valV_spec * 1000.0  # convert kJ to J
-    #                         spec_u = su.replace('kJ/kg', 'J/mol')
-    #                     else:
-    #                         spec_u = su.replace('/kg', '/mol')
-    #                     reporter.add_value_to_property(f'{sp}L', valL_spec, spec_u, fstring=sfs)
-    #                     reporter.add_value_to_property(f'{sp}V', valV_spec, spec_u, fstring=sfs)
-    #     return f'THERMODYNAMIC STATE OF {msg}STEAM/WATER:\n' + reporter.report()
+    def report(self):
+        reporter = statereporter.StateReporter()
+        for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
+            if getattr(self, p) is not None:
+                reporter.add_property(p, self._from_table_units(getattr(self, p), self.get_unit(p)), self.get_unit(p), self.get_formatter(p))
+        if self.x is not None:
+            reporter.add_property('x', self.x, f'{self.mass_unit} vapor/{self.mass_unit} total')
+            for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
+                for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
+                    if not p in 'TP':
+                        if getattr(state, p) is not None:
+                            reporter.add_property(f'{p}{phase}', self._from_table_units(getattr(state, p), self.get_unit(p)), self.get_unit(p), self.get_formatter(p))
+        return reporter.report()
+
+    def __repr__(self):
+        self.lookup()
+        return f'State(T={self.T}, P={self.P}, v={self.v}, u={self.u}, h={self.h}, s={self.s}, x={self.x})'
 
     def clone(self, **kwargs) -> State:
         """ Create a copy of this State instance """
@@ -291,7 +366,7 @@ class State:
             """ T OR P given, along with some other property (v,u,s,h) """
             self._resolve_at_TorP_and_Theta(specs)
         else:
-            raise ValueError('If not explicitly saturated, you must specify either T or P')
+            self._resolve_at_Theta1_and_Theta2(specs)
 
     def _resolve_at_T_and_P(self):
         """ T and P are both given explicitly.  Could be either superheated or subcooled state """
@@ -361,6 +436,31 @@ class State:
             if p not in specs and p != 'x':
                 setattr(self, p, v)
 
+    def _resolve_at_Theta1_and_Theta2(self, specs: list[str]):
+        specdict = {specs[0]: getattr(self, specs[0]), specs[1]: getattr(self, specs[1])}
+        try:
+            sub_try = self.subc.Bilinear(specdict)
+        except Exception as e:
+            logger.debug(f'Subcooled Bilinear failed: {e}')
+            sub_try = None
+        try:
+            sup_try = self.suph.Bilinear(specdict)
+        except Exception as e:
+            logger.debug(f'Superheated Bilinear failed: {e}')
+            sup_try = None
+        if sub_try and not sup_try:
+            retdict = sub_try
+        elif sup_try and not sub_try:
+            retdict = sup_try
+        elif sup_try and sub_try:
+            raise ValueError(f'Specified state is ambiguous between subcooled and superheated states based on {specs}')
+        else:
+            raise ValueError(f'Specified state could not be resolved as either subcooled or superheated based on {specs}')
+        logger.debug(f'Resolved state with {retdict}')
+        for p, v in retdict.items():
+            if p not in specs and p != 'x':
+                setattr(self, p, v)
+
     def _resolve_satd(self, specs: list[str]):
         """
         Resolve an explicitly saturated state given specifications
@@ -376,6 +476,7 @@ class State:
             if 'T' in specs or 'P' in specs:
                 """ Vapor fraction and one of T or P is given """
                 p = 'T' if 'T' in specs else 'P'
+                v = getattr(self, p)
                 complement = 'P' if p == 'T' else 'T'
                 prop = self.satd.interpolators[p][complement](v)
                 setattr(self, complement, prop)
@@ -445,54 +546,16 @@ class State:
         if hasattr(self, 'Vapor'):
             self.Vapor._scalarize()
 
-# class RandomSample(State):
-#     def __init__(self,phase='suph', satdDOF='TC', seed=None, Prange=None, Trange=None):
-#         if phase == 'satd':
-#             if satdDOF == 'TC':
-#                 sample_this = SteamTables[phase].DF['TC']
-#             else:
-#                 sample_this = SteamTables[phase].DF['P']
-#         elif phase == 'suph' or phase == 'subc':
-#             sample_this = SteamTables[phase].data
-#         abs_mins = {'TC': sample_this['TC'].min(), 'P': sample_this['P'].min()}
-#         abs_maxs = {'TC': sample_this['TC'].max(), 'P': sample_this['P'].max()}
-#         sample = sample_this.sample(n=1, random_state=seed)
-#         TC = sample['TC'].values[0]
-#         P = sample['P'].values[0]
-#         if Trange and not Prange:
-#             if Trange[0] < abs_mins['TC']:
-#                 raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum TC in the data ({abs_mins["TC"]})')
-#             if Trange[1] > abs_maxs['TC']:
-#                 raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum TC in the data ({abs_maxs["TC"]})')
-#             while not Trange[0] < TC < Trange[1]:
-#                 sample = sample_this.sample(n=1)
-#                 TC = sample['TC'].values[0]
-#         if Prange and not Trange:
-#             if Prange[0] < abs_mins['P']:
-#                 raise ValueError(f'Prange[0] ({Prange[0]}) is below the minimum P in the data ({abs_mins["P"]})')
-#             if Prange[1] > abs_maxs['P']:
-#                 raise ValueError(f'Prange[1] ({Prange[1]}) is above the maximum P in the data ({abs_maxs["P"]})')
-#             while not Prange[0] < P < Prange[1]:
-#                 sample = sample_this.sample(n=1)
-#                 P = sample['P'].values[0]
-#         if Prange and Trange:
-#             if Trange[0] < abs_mins['TC']:
-#                 raise ValueError(f'Trange[0] ({Trange[0]}) is below the minimum TC in the data ({abs_mins["TC"]})')
-#             if Trange[1] > abs_maxs['TC']:
-#                 raise ValueError(f'Trange[1] ({Trange[1]}) is above the maximum TC in the data ({abs_maxs["TC"]})')
-#             if Prange[0] < abs_mins['P']: 
-#                 raise ValueError(f'Prange[0] ({Prange[0]}) is below the minimum P in the data ({abs_mins["P"]})')
-#             if Prange[1] > abs_maxs['P']: 
-#                 raise ValueError(f'Prange[1] ({Prange[1]}) is above the maximum P in the data ({abs_maxs["P"]})')
-#             while not Prange[0] < P < Prange[1] or not Trange[0] < TC < Trange[1]:
-#                 sample = sample_this.sample(n=1)
-#                 TC = sample['TC'].values[0]
-#                 P = sample['P'].values[0]
-#         if phase == 'satd':
-#             if satdDOF == 'TC':
-#                 super().__init__(TC=TC, x=1.0)
-#             else:
-#                 super().__init__(P=P, x=1.0)
-#         else:
-#             super().__init__(TC=TC, P=P)
-    
+    def delta(self, other: State) -> dict:
+        """ Calculate property differences between this state and another state """
+        self.lookup()
+        other.lookup()
+        delta_props = {}
+        for p in self._STATE_VAR_FIELDS:
+            val1 = getattr(self, p)
+            val2 = getattr(other, p)
+            if val1 is not None and val2 is not None:
+                delta_props[p] = val2 - val1
+        delta_props['Pv'] = other.Pv - self.Pv
+        return delta_props
+

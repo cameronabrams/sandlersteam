@@ -1,21 +1,21 @@
 .. _contributing:
 
-Contributing to sandlercubics
+Contributing to sandlersteam
 ==============================
 
-Thank you for your interest in contributing to sandlercubics! This document provides guidelines for contributing to the project.
+Thank you for your interest in contributing to sandlersteam! This document provides guidelines for contributing to the project.
 
 Getting Started
 ---------------
 
-1. **Fork the repository** on GitHub: https://github.com/cameronabrams/sandlercubics
+1. **Fork the repository** on GitHub: https://github.com/cameronabrams/sandlersteam
 
 2. **Clone your fork locally:**
 
    .. code-block:: bash
 
-      git clone https://github.com/YOUR-USERNAME/sandlercubics.git
-      cd sandlercubics
+      git clone https://github.com/YOUR-USERNAME/sandlersteam.git
+      cd sandlersteam
 
 3. **Create a branch** for your changes:
 
@@ -62,8 +62,7 @@ Runtime dependencies:
 
 * numpy
 * scipy
-* sandlerprops (for compound database)
-* sandlermisc (for utilities)
+* sandlermisc (for for general formatting and utilities)
 
 Development dependencies (optional):
 
@@ -81,7 +80,7 @@ Bug Reports
 
 If you find a bug:
 
-1. Check if it's already reported in `GitHub Issues <https://github.com/cameronabrams/sandlercubics/issues>`_
+1. Check if it's already reported in `GitHub Issues <https://github.com/cameronabrams/sandlersteam/issues>`_
 2. If not, create a new issue with:
    
    * Clear, descriptive title
@@ -89,7 +88,7 @@ If you find a bug:
    * Expected behavior
    * Actual behavior
    * Python version and operating system
-   * sandlercubics version (``sandlercubics --version``)
+   * sandlersteam version (``sandlersteam --version``)
 
 Example bug report template::
 
@@ -98,8 +97,8 @@ Example bug report template::
    
    **To Reproduce**
    ```python
-   from sandlercubics.eos import PengRobinsonEOS
-   eos = PengRobinsonEOS(...)
+   from sandlersteam.state import State
+   s = State(T=800, P=40).lookup()
    # Steps that trigger the bug
    ```
    
@@ -112,7 +111,7 @@ Example bug report template::
    **Environment**
    - OS: [e.g., Windows 10, Ubuntu 20.04]
    - Python version: [e.g., 3.9.5]
-   - sandlercubics version: [e.g., 0.5.0]
+   - sandlersteam version: [e.g., 0.5.0]
 
 Feature Requests
 ~~~~~~~~~~~~~~~~
@@ -139,38 +138,12 @@ Coding Standards
 Code Style
 ~~~~~~~~~~
 
-sandlercubics follows PEP 8 style guidelines:
+sandlersteam follows PEP 8 style guidelines:
 
 * Use 4 spaces for indentation (no tabs)
 * Maximum line length: 100 characters (flexible for clarity)
 * Use descriptive variable names
 * Add docstrings to all public functions and classes
-
-Example:
-
-.. code-block:: python
-
-   def calculate_departure(T: float, P: float, eos: CubicEOS) -> float:
-       """
-       Calculate enthalpy departure for given conditions.
-       
-       Parameters
-       ----------
-       T : float
-           Temperature in Kelvin
-       P : float
-           Pressure in MPa
-       eos : CubicEOS
-           Equation of state object
-           
-       Returns
-       -------
-       float
-           Enthalpy departure in J/mol
-       """
-       eos.T = T
-       eos.P = P
-       return eos.h_departure
 
 Type Hints
 ~~~~~~~~~~
@@ -250,7 +223,7 @@ Running Tests
    pytest tests/test_eos.py
    
    # Run with coverage
-   pytest --cov=sandlercubics
+   pytest --cov=sandlersteam
 
 Writing Tests
 ~~~~~~~~~~~~~
@@ -261,23 +234,29 @@ Place tests in the ``tests/`` directory:
 
    # tests/test_new_feature.py
    import pytest
-   from sandlercubics.eos import PengRobinsonEOS
+   from sandlersteam.state import State
    
-   def test_peng_robinson_initialization():
-       """Test that PR EOS initializes correctly."""
-       eos = PengRobinsonEOS(Tc=190.4, Pc=4.6, omega=0.011)
-       assert eos.Tc == 190.4
-       assert eos.Pc == 4.6
-       assert eos.omega == 0.011
-   
-   def test_compressibility_calculation():
-       """Test Z calculation for known case."""
-       eos = PengRobinsonEOS(Tc=190.4, Pc=4.6, omega=0.011)
-       eos.T = 400
-       eos.P = 0.5
-       
-       # Z should be close to 1.0 for this low pressure
-       assert 0.95 < eos.Z < 1.05
+    def test_state_resolve_superheated_exact_at_T_and_P(self):
+        state = State(P=0.1, T=300)
+        state.lookup()
+        self.assertAlmostEqual(state.h, 3074.3, places=1)
+
+        state = State(P=1.0, T=500)
+        state.lookup()
+        self.assertAlmostEqual(state.s, 7.7622, places=3)
+
+        state = State(P=12.5, T=600)
+        state.lookup()
+        self.assertAlmostEqual(state.u, 3225.4, places=1)
+
+    def test_state_resolve_superheated_interpolated_at_T_and_P(self):
+        state = State(P=0.5, T=375)
+        state.lookup()
+        self.assertAlmostEqual(state.h, 3219.8, places=1)
+
+        state = State(P=0.7, T=450)
+        state.lookup()
+        self.assertAlmostEqual(state.s, 7.787225, places=3)
 
 Test Coverage
 ~~~~~~~~~~~~~
@@ -325,7 +304,7 @@ Example:
    New Function
    ~~~~~~~~~~~~
    
-   .. autofunction:: sandlercubics.utils.new_function
+   .. autofunction:: sandlersteam.utils.new_function
 
 Pull Request Process
 --------------------
@@ -342,8 +321,8 @@ Pull Request Process
    .. code-block:: bash
 
       pytest
-      black sandlercubics tests  # Format code
-      mypy sandlercubics  # Type checking (if configured)
+      black sandlersteam tests  # Format code
+      mypy sandlersteam  # Type checking (if configured)
 
 3. **Commit your changes:**
 
@@ -440,7 +419,7 @@ Release Process
 For maintainers:
 
 1. Update version in ``pyproject.toml``
-2. Update ``CHANGELOG.md``
+2. Update ``docs/changelog.rst``
 3. Create git tag: ``git tag v0.X.X``
 4. Push tag: ``git push origin v0.X.X``
 5. Build and upload to PyPI:
@@ -466,4 +445,4 @@ Questions?
 * Email: cfa22@drexel.edu
 * Check existing issues and pull requests
 
-Thank you for contributing to sandlercubics! Your efforts help make this tool better for everyone in the chemical engineering education community.
+Thank you for contributing to sandlersteam! Your efforts help make this tool better for everyone in the chemical engineering education community.
