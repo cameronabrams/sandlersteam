@@ -6,10 +6,12 @@ from scipy.interpolate import interp1d
 from .satd import SaturatedSteamTables
 from .unsatd import UnsaturatedSteamTables
 from sandlermisc import statereporter
-
+import pint
 import logging
 
 logger = logging.getLogger(__name__)
+
+ureg = pint.UnitRegistry(autoconvert_offset_to_baseunit = True)
 
 _instance = None
 
@@ -33,14 +35,41 @@ NEGLARGE=-LARGE
 G_PER_MOL = 18.01528  # g/mol for water
 KG_PER_MOL = G_PER_MOL / 1000.000  # kg/mol for water
 MOL_PER_KG = 1.0 / KG_PER_MOL  # mol/kg for water
-TCK = 647.3
-TCC = TCK - 273.15
-PCBAR = 221.20
-PCMPA = PCBAR / 10.0
+TCK = 647.3 * ureg('K')  # critical temperature in K
+TCC = TCK.to('degC')
+
+PCBAR = 221.20 * ureg('bar')  # critical pressure in bar
+PCMPA = PCBAR.to('MPa')
 
 @dataclass
 class State:
+
+    # Units
+    # temperature_unit: str = 'C'
+    # pressure_unit: str = 'MPa'
+    # mass_unit: str = 'kg'
+    # volume_unit: str = 'm3'
+    # energy_unit: str = 'kJ'
     
+    # State properties
+    P: float | pint.Quantity = None
+    T: float | pint.Quantity = None
+    v: float | pint.Quantity = None
+    u: float | pint.Quantity = None
+    h: float | pint.Quantity = None
+    s: float | pint.Quantity = None
+
+    # Vapor fraction if two-phase saturated state    
+    x: float = None
+    L: State = None
+    V: State = None
+
+    def __post_init__(self):
+        self.tables = get_tables()
+        self.satd = self.tables['satd']
+        self.suph = self.tables['suph']
+        self.subc = self.tables['subc']
+   
     _cache: dict = field(default_factory=dict, init=False, repr=False)
     """ Cache for computed properties """
 
@@ -52,18 +81,31 @@ class State:
     _STATE_VAR_FIELDS = frozenset(_STATE_VAR_ORDERED_FIELDS)
     """ Fields that define the input state for caching purposes """
 
-    _UNIT_FIELDS = frozenset(['mass_unit', 'temperature_unit', 'pressure_unit', 'volume_unit'])
-    """ Fields that define the units for caching purposes """
+    # _UNIT_FIELDS = frozenset(['mass_unit', 'temperature_unit', 'pressure_unit', 'volume_unit'])
+    # """ Fields that define the units for caching purposes """
 
     def __setattr__(self, name, value):
         """ Clear cache on input field changes """
-        if name in self._STATE_VAR_FIELDS.union(self._UNIT_FIELDS).union({'x'}) and hasattr(self, '_cache'):
+        # logger.debug(f'Setting attribute {name} to value {value} of type {type(value)}')
+        if name in self._STATE_VAR_FIELDS.union({'x'}) and hasattr(self, '_cache'):
             self._cache.clear()
+        if value is None:
+            super().__setattr__(name, value)
+            return
+        # if the value is just a float, use its name to determine default units and then set the
+        # attribute as a pint.Quantity
+        if isinstance(value, float) or isinstance(value, int):
+            if name in self._STATE_VAR_FIELDS:
+                default_unit = self.get_default_unit(name)
+                if default_unit is not None:
+                    value = value * ureg(default_unit)
+        elif isinstance(value, pint.Quantity) and name in self._STATE_VAR_FIELDS:
+            value = value.to(self.get_default_unit(name))
         super().__setattr__(name, value)
 
     def _get_current_input_state(self):
         """ Snapshot of current input field values. """
-        return {field: getattr(self, field) for field in self._STATE_VAR_FIELDS.union(self._UNIT_FIELDS).union({'x'})}
+        return {field: getattr(self, field) for field in self._STATE_VAR_FIELDS.union({'x'})}
 
     def is_cache_stale(self, property_name: str = None):
         """
@@ -83,51 +125,38 @@ class State:
         
         # Show which inputs changed
         if self._input_state is None:
-            return self._STATE_VAR_FIELDS.union(self._UNIT_FIELDS).union({'x'})  # All inputs "changed" (initial state)
+            return self._STATE_VAR_FIELDS.union({'x'})  # All inputs "changed" (initial state)
         
         current = self._get_current_input_state()
-        changed = {k for k in self._STATE_VAR_FIELDS.union(self._UNIT_FIELDS).union({'x'}) if current[k] != self._input_state.get(k)}
+        changed = {k for k in self._STATE_VAR_FIELDS.union({'x'}) if current[k] != self._input_state.get(k)}
         return changed if changed else False
 
-    # Units
-    temperature_unit: str = 'C'
-    pressure_unit: str = 'MPa'
-    mass_unit: str = 'kg'
-    volume_unit: str = 'm3'
-    energy_unit: str = 'kJ'
-    
-    # State properties
-    P: float = None
-    T: float = None
-    v: float = None
-    u: float = None
-    h: float = None
-    s: float = None
-
-    # Vapor fraction if two-phase saturated state    
-    x: float = None
-    L: State = None
-    V: State = None
-
-    def __post_init__(self):
-        self.tables = get_tables()
-        self.satd = self.tables['satd']
-        self.suph = self.tables['suph']
-        self.subc = self.tables['subc']
-
-    def get_unit(self, field_name: str) -> str:
-        """Get the unit for a given field"""
-        unit_map = {
-            'P': self.pressure_unit,
-            'T': self.temperature_unit,
-            'x': f'{self.mass_unit} vapor/{self.mass_unit} total',
-            'v': f'{self.volume_unit}/{self.mass_unit}',
-            'u': f'{self.energy_unit}/{self.mass_unit}',
-            'h': f'{self.energy_unit}/{self.mass_unit}',
-            's': f'{self.energy_unit}/{self.mass_unit}-K',
-            'Pv': f'{self.energy_unit}/{self.mass_unit}',
+    def get_default_unit(self, field_name: str) -> str:
+        """Get the default unit for a given field"""
+        default_unit_map = {
+            'P': 'MPa',
+            'T': 'degC',
+            'v': 'm**3 / kg',
+            'u': 'kJ / kg',
+            'h': 'kJ / kg',
+            's': 'kJ / (kg * K)',
+            'Pv': 'kJ / kg',
         }
-        return unit_map.get(field_name)
+        return default_unit_map.get(field_name)
+
+    # def get_unit(self, field_name: str) -> str:
+    #     """Get the unit for a given field"""
+    #     unit_map = {
+    #         'P': self.pressure_unit,
+    #         'T': self.temperature_unit,
+    #         'x': f'{self.mass_unit} vapor/{self.mass_unit} total',
+    #         'v': f'{self.volume_unit}/{self.mass_unit}',
+    #         'u': f'{self.energy_unit}/{self.mass_unit}',
+    #         'h': f'{self.energy_unit}/{self.mass_unit}',
+    #         's': f'{self.energy_unit}/{self.mass_unit}-K',
+    #         'Pv': f'{self.energy_unit}/{self.mass_unit}',
+    #     }
+    #     return unit_map.get(field_name)
     
     def get_formatter(self, field_name: str) -> str:
         """Get the formatter for a given field"""
@@ -217,40 +246,40 @@ class State:
             case _:
                 raise ValueError(f'Unsupported unit conversion to {specified_unit}')
 
-    @property
-    def TC(self):
-        """ Temperature in degrees Celsius """
-        return self._to_table_units(self.T, self.temperature_unit)
+    # @property
+    # def TC(self):
+    #     """ Temperature in degrees Celsius """
+    #     return self._to_table_units(self.T, self.temperature_unit)
 
-    @property
-    def PMPa(self):
-        """ Pressure in MPa """
-        return self._to_table_units(self.P, self.pressure_unit)
+    # @property
+    # def PMPa(self):
+    #     """ Pressure in MPa """
+    #     return self._to_table_units(self.P, self.pressure_unit)
 
-    @property
-    def vm3KG(self):
-        """ Specific volume in m3/kg """
-        return self._to_table_units(self.v, f'{self.volume_unit}/{self.mass_unit}')
+    # @property
+    # def vm3KG(self):
+    #     """ Specific volume in m3/kg """
+    #     return self._to_table_units(self.v, f'{self.volume_unit}/{self.mass_unit}')
 
-    @property
-    def hkJKG(self):
-        """ Specific enthalpy in kJ/kg """
-        return self._to_table_units(self.h, f'{self.energy_unit}/{self.mass_unit}')
+    # @property
+    # def hkJKG(self):
+    #     """ Specific enthalpy in kJ/kg """
+    #     return self._to_table_units(self.h, f'{self.energy_unit}/{self.mass_unit}')
     
-    @property
-    def ukJKG(self):
-        """ Specific internal energy in kJ/kg """
-        return self._to_table_units(self.u, f'{self.energy_unit}/{self.mass_unit}')
+    # @property
+    # def ukJKG(self):
+    #     """ Specific internal energy in kJ/kg """
+    #     return self._to_table_units(self.u, f'{self.energy_unit}/{self.mass_unit}')
     
-    @property
-    def skJKGK(self):
-        """ Specific entropy in kJ/kg-K """
-        return self._to_table_units(self.s, f'{self.energy_unit}/{self.mass_unit}-K')
+    # @property
+    # def skJKGK(self):
+    #     """ Specific entropy in kJ/kg-K """
+    #     return self._to_table_units(self.s, f'{self.energy_unit}/{self.mass_unit}-K')
 
     @property
     def Pv(self):
         """ Pressure * specific volume in kJ/kg """
-        return self._from_table_units(self.PMPa * self.vm3KG * 1000.0, "kJ/kg")  # in kJ/kg
+        return self.P.to('kPa') * self.v.to('m**3 / kg')
 
     def lookup(self):
         """ Lookup and compute all properties based on current inputs """
@@ -287,14 +316,14 @@ class State:
         has_only_T_or_P = hasT ^ hasP
         if hasT and has_only_T_or_P:
             p = 'T'
-            v = self.TC
+            v = self.T
             op = specs[0] if specs[1] == 'T' else specs[1]
             if v > TCC:
                 logger.debug(f'Temperature {v}C exceeds critical temperature {TCC}C; cannot be saturated')
                 return False
         elif hasP and has_only_T_or_P:
             p = 'P'
-            v = self.PMPa
+            v = self.P
             op = specs[0] if specs[1] == 'P' else specs[1]
             if v > PCMPA:
                 logger.debug(f'Pressure {v}MPa exceeds critical pressure {PCMPA} MPa; cannot be saturated')
@@ -302,13 +331,13 @@ class State:
         if p is not None and op is not None:
             logger.debug(f'Checking saturation at {p}={v} for property {op}={getattr(self, op)}')
             logger.debug(f'Saturation limits for {p}: {self.satd.lim[p]}')
-            logger.debug(f'Between? {self.satd.lim[p][0] <= v <= self.satd.lim[p][1]}')
-            if not (self.satd.lim[p][0] <= v <= self.satd.lim[p][1]):
+            logger.debug(f'Between? {self.satd.lim[p][0] <= v.m <= self.satd.lim[p][1]}')
+            if not (self.satd.lim[p][0] <= v.m <= self.satd.lim[p][1]):
                 logger.debug(f'Out of saturation limits for {p}={v}')
                 return False
-            op_valV = self.satd.interpolators[p][f'{op}V'](v)
-            op_valL = self.satd.interpolators[p][f'{op}L'](v)
-            if op_valL < getattr(self, op) < op_valV or op_valV < getattr(self, op) < op_valL:
+            op_valV = self.satd.interpolators[p][f'{op}V'](v.m)
+            op_valL = self.satd.interpolators[p][f'{op}L'](v.m)
+            if op_valL < getattr(self, op).m < op_valV or op_valV < getattr(self, op).m < op_valL:
                 return True
         return False
 
@@ -346,10 +375,10 @@ class State:
     def clone(self, **kwargs) -> State:
         """ Create a copy of this State instance """
         new_state = State()
-        for f in self._STATE_VAR_FIELDS.union({'x'}).union(self._UNIT_FIELDS):
+        for f in self._STATE_VAR_FIELDS.union({'x'}):
             setattr(new_state, f, getattr(self, f))
         for k, v in kwargs.items():
-            if k in self._STATE_VAR_FIELDS.union({'x'}).union(self._UNIT_FIELDS):
+            if k in self._STATE_VAR_FIELDS.union({'x'}):
                 setattr(new_state, k, v)
         return new_state
 
@@ -370,14 +399,14 @@ class State:
 
     def _resolve_at_T_and_P(self):
         """ T and P are both given explicitly.  Could be either superheated or subcooled state """
-        specdict = {'T': self.TC, 'P': self.PMPa}
+        specdict = {'T': self.T.m, 'P': self.P.m}
 
-        if self.satd.lim['T'][0] < self.TC < self.satd.lim['T'][1]:
-            Psat = self.satd.interpolators['T']['P'](self.TC)
+        if self.satd.lim['T'][0] < self.T.m < self.satd.lim['T'][1]:
+            Psat = self.satd.interpolators['T']['P'](self.T.m)
             # print(f'Returns Psat of {Psat}')
         else:
             Psat = LARGE
-        if self.P > Psat:
+        if self.P.m > Psat:
             ''' P is higher than saturation: this is a subcooled state '''
             retdict = self.subc.Bilinear(specdict)
         else:
@@ -385,7 +414,9 @@ class State:
             retdict = self.suph.Bilinear(specdict)
         for p, v in retdict.items():
             if p not in specdict and p != 'x':
-                setattr(self, p, v)
+                # interpolators return scalars in default units, so we
+                # put units on them here
+                setattr(self, p, v * ureg(self.get_default_unit(p)))
     
     def _resolve_at_TorP_and_Theta(self, specs: list[str]):
         """ T or P along with some other property (v,u,s,h) are specified """
@@ -400,22 +431,22 @@ class State:
         supercritical = False
         if hasT:
             p = 'T'
-            v = self.TC
+            v = self.T
             supercritical = v >= TCC
         else:
             p = 'P'
-            v = self.PMPa
+            v = self.P
             supercritical = v >= PCMPA
 
         op = specs[0] if specs[1] == p else specs[1]
         th = getattr(self, op)
 
         if not supercritical:
-            thL = self.satd.interpolators[p][f'{op}L'](v)
-            thV = self.satd.interpolators[p][f'{op}V'](v)
-            if th < thL:
+            thL = self.satd.interpolators[p][f'{op}L'](v.m)
+            thV = self.satd.interpolators[p][f'{op}V'](v.m)
+            if th.m < thL:
                 is_subcooled = True
-            elif th > thV:
+            elif th.m > thV:
                 is_superheated = True
             else:
                 raise ValueError(f'Specified state is saturated based on {p}={v} and {op}={th}')
@@ -427,17 +458,17 @@ class State:
 
         if not is_superheated and not is_subcooled:
             raise ValueError(f'Specified state is saturated based on {p}={v} and {op}={th}')
-        specdict = {p: v, op: th}
+        specdict = {p: v.m, op: th.m}
         if is_superheated:
             retdict = self.suph.Bilinear(specdict)
         else:
             retdict = self.subc.Bilinear(specdict)
         for p, v in retdict.items():
             if p not in specs and p != 'x':
-                setattr(self, p, v)
+                setattr(self, p, v * ureg(self.get_default_unit(p)))
 
     def _resolve_at_Theta1_and_Theta2(self, specs: list[str]):
-        specdict = {specs[0]: getattr(self, specs[0]), specs[1]: getattr(self, specs[1])}
+        specdict = {specs[0]: getattr(self, specs[0]).m, specs[1]: getattr(self, specs[1]).m}
         try:
             sub_try = self.subc.Bilinear(specdict)
         except Exception as e:
@@ -459,7 +490,7 @@ class State:
         logger.debug(f'Resolved state with {retdict}')
         for p, v in retdict.items():
             if p not in specs and p != 'x':
-                setattr(self, p, v)
+                setattr(self, p, v * ureg(self.get_default_unit(p)))
 
     def _resolve_satd(self, specs: list[str]):
         """
@@ -478,14 +509,14 @@ class State:
                 p = 'T' if 'T' in specs else 'P'
                 v = getattr(self, p)
                 complement = 'P' if p == 'T' else 'T'
-                prop = self.satd.interpolators[p][complement](v)
-                setattr(self, complement, prop)
+                prop = self.satd.interpolators[p][complement](v.m)
+                setattr(self, complement, prop * ureg(self.get_default_unit(complement)))
                 self.Liquid = self.clone(x=0.0)
                 self.Vapor = self.clone(x=1.0)
                 for op in self._STATE_VAR_FIELDS - {'T','P'}:
                     for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                        prop = self.satd.interpolators[p][f'{op}{phase}'](v)
-                        setattr(state, op, prop)
+                        prop = self.satd.interpolators[p][f'{op}{phase}'](v.m)
+                        setattr(state, op, prop * ureg(self.get_default_unit(op)))
                     setattr(self, op, self.x * getattr(self.Vapor, op) + (1 - self.x) * getattr(self.Liquid, op))
             else:
                 """ Vapor fraction and one lever-rule-calculable property (u, v, s, h) is given """
@@ -494,14 +525,14 @@ class State:
                 X = np.array(self.satd.DF['T']['T'])
                 f = svi(interp1d(X, Y))
                 try:
-                    self.T = f(th)
-                    self.P = self.satd.interpolators['T']['P'](self.T)
+                    self.T = f(th.m)
+                    self.P = self.satd.interpolators['T']['P'](self.T.m)
                     self.Liquid = self.clone(x=0.0)
                     self.Vapor = self.clone(x=1.0)
                     for op in self._STATE_VAR_FIELDS - {'T','P'}:
                         for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                            prop = self.satd.interpolators['T'][f'{op}{phase}'](self.T)
-                            setattr(state, op, prop)
+                            prop = self.satd.interpolators['T'][f'{op}{phase}'](self.T.m)
+                            setattr(state, op, prop * ureg(self.get_default_unit(op)))
                         if op != th:
                             setattr(self, op, self.x * getattr(self.Vapor, op) + (1 - self.x) * getattr(self.Liquid, op))
                 except:
@@ -513,24 +544,24 @@ class State:
             v = getattr(self, p)
             op = specs[0] if specs[1] == p else specs[1]
             th = getattr(self, op)
-            thL = self.satd.interpolators[p][f'{op}L'](v)
-            thV = self.satd.interpolators[p][f'{op}V'](v)
+            thL = self.satd.interpolators[p][f'{op}L'](v.m)
+            thV = self.satd.interpolators[p][f'{op}V'](v.m)
             th_list = [thL, thV]
             th_list.sort()
-            if th_list[0] < th < th_list[1]:
+            if th_list[0] < th.m < th_list[1]:
                 """ This is a saturated state! Use interpolation to get saturation value of complement property and lever rule to get vapor fraction: """
-                prop = self.satd.interpolators[p][pcomp](v)
-                setattr(self, pcomp, prop)
-                self.x = (th - thL) / (thV - thL)
+                prop = self.satd.interpolators[p][pcomp](v.m)
+                setattr(self, pcomp, prop * ureg(self.get_default_unit(pcomp)))
+                self.x = (th.m - thL) / (thV - thL)
                 self.Liquid = self.clone(x=0.0)
                 self.Vapor = self.clone(x=1.0)
                 for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                    prop = self.satd.interpolators[p][f'{op}{phase}'](v)
-                    setattr(state, op, prop)
+                    prop = self.satd.interpolators[p][f'{op}{phase}'](v.m)
+                    setattr(state, op, prop * ureg(self.get_default_unit(op)))
                 for op2 in self._STATE_VAR_FIELDS - {'T','P', op}:
                     for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                        prop = self.satd.interpolators[p][f'{op2}{phase}'](v)
-                        setattr(state, op2, prop)
+                        prop = self.satd.interpolators[p][f'{op2}{phase}'](v.m)
+                        setattr(state, op2, prop * ureg(self.get_default_unit(op2)))
                     setattr(self, op2, self.x * getattr(self.Vapor, op2) + (1 - self.x) * getattr(self.Liquid, op2))
             else:
                 raise ValueError(f'Specified property {op}={th} is not between saturated liquid ({thL}) and vapor ({thV}) values at {p}={v}')
