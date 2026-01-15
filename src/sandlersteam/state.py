@@ -43,69 +43,99 @@ PCMPA = PCBAR.to('MPa')
 
 @dataclass
 class State:
+    """
+    Thermodynamic state of steam/water.
+    """
+    P: pint.Quantity = None
+    """ Pressure """
+    T: pint.Quantity = None
+    """ Temperature """
+    v: pint.Quantity = None
+    """ Specific volume """
+    u: pint.Quantity = None
+    """ Specific internal energy """
+    h: pint.Quantity = None
+    """ Specific enthalpy """
+    s: pint.Quantity = None
+    """ Specific entropy """
 
-    # Units
-    # temperature_unit: str = 'C'
-    # pressure_unit: str = 'MPa'
-    # mass_unit: str = 'kg'
-    # volume_unit: str = 'm3'
-    # energy_unit: str = 'kJ'
-    
-    # State properties
-    P: float | pint.Quantity = None
-    T: float | pint.Quantity = None
-    v: float | pint.Quantity = None
-    u: float | pint.Quantity = None
-    h: float | pint.Quantity = None
-    s: float | pint.Quantity = None
-
-    # Vapor fraction if two-phase saturated state    
     x: float = None
+    """ Vapor fraction (quality) """
     L: State = None
+    """ Liquid phase state when saturated """
     V: State = None
+    """ Vapor phase state when saturated """
+
+    _cache: dict = field(default_factory=dict, init=False, repr=False)
+    """ Cache for computed properties and input state snapshot """
+
+    _STATE_VAR_ORDERED_FIELDS = ['T', 'P', 'v', 's', 'h', 'u']
+    """ Ordered fields that define the input state """
+
+    _STATE_VAR_FIELDS = frozenset(_STATE_VAR_ORDERED_FIELDS).union({'x'})
+    """ Fields that define the input state for caching purposes """
 
     def __post_init__(self):
+        """ Requests access to global steam tables singleton """
         self.tables = get_tables()
         self.satd = self.tables['satd']
         self.suph = self.tables['suph']
         self.subc = self.tables['subc']
    
-    _cache: dict = field(default_factory=dict, init=False, repr=False)
-    """ Cache for computed properties """
-
-    _input_state: dict | None = field(default=None, init=False, repr=False)
-    """ Snapshot of input field values for cache validation """
-
-    _STATE_VAR_ORDERED_FIELDS = ['T', 'P', 'v', 's', 'h', 'u']
-
-    _STATE_VAR_FIELDS = frozenset(_STATE_VAR_ORDERED_FIELDS)
-    """ Fields that define the input state for caching purposes """
-
-    # _UNIT_FIELDS = frozenset(['mass_unit', 'temperature_unit', 'pressure_unit', 'volume_unit'])
-    # """ Fields that define the units for caching purposes """
+    def _dimensionalize(self, value):
+        # update value to carry default units if necessary
+        if (isinstance(value, float) or isinstance(value, int)) and name in self._STATE_VAR_FIELDS:
+            # apply default units to raw numbers
+            default_unit = self.get_default_unit(name)
+            if default_unit is not None:
+                value = value * ureg(default_unit)
+        elif isinstance(value, pint.Quantity) and name in self._STATE_VAR_FIELDS:
+            # convert any incoming pint.Quantity to default units
+            value = value.to(self.get_default_unit(name))
+        return value
 
     def __setattr__(self, name, value):
-        """ Clear cache on input field changes """
-        # logger.debug(f'Setting attribute {name} to value {value} of type {type(value)}')
-        if name in self._STATE_VAR_FIELDS.union({'x'}) and hasattr(self, '_cache'):
-            self._cache.clear()
-        if value is None:
+        """ 
+        Generalized setattr to handle units conversion for state variables.
+        """
+        if name in self._STATE_VAR_FIELDS:
+            value = self._dimensionalize(value)
+            # if this is a state variable, it could be being set as an input or as
+            # a computed property. If value is none and it is in the input set, remove it and 
+            # blank all computed properties.
+            if not hasattr(self, '_cache'):
+                self._initialize_cache(name, value)
+            if self._INPUT_STATE_VARS is not None:
+                if value is None and name in self._INPUT_STATE_VARS:
+                    self._INPUT_STATE_VARS.remove(name)
+                    """ Input state variable removed: blank all computed properties; 
+                    also blanks this variable since it is not in the input set anymore """
+                    for f in self._STATE_VAR_FIELDS:
+                        if f not in self._INPUT_STATE_VARS:
+                            super().__setattr__(f, None)
+                    return
+                if len(self._INPUT_STATE_VARS) < 2:
+                    self._INPUT_STATE_VARS.add(name)
+                if len(self._INPUT_STATE_VARS) == 2:
+                    """ Input state is set: resolve the state now """
+                    self._resolve()
+            else:
+                ### initialize the input state vars set
+                if value is not None:
+                    self._INPUT_STATE_VARS = {name}
+        else:
             super().__setattr__(name, value)
-            return
-        # if the value is just a float, use its name to determine default units and then set the
-        # attribute as a pint.Quantity
-        if isinstance(value, float) or isinstance(value, int):
-            if name in self._STATE_VAR_FIELDS:
-                default_unit = self.get_default_unit(name)
-                if default_unit is not None:
-                    value = value * ureg(default_unit)
-        elif isinstance(value, pint.Quantity) and name in self._STATE_VAR_FIELDS:
-            value = value.to(self.get_default_unit(name))
-        super().__setattr__(name, value)
+
+        # if name in self._STATE_VAR_FIELDS and hasattr(self, '_cache'):
+        #     self._cache.clear()
+        # if value is None:
+        #     super().__setattr__(name, value)
+
+        # super().__setattr__(name, value)
 
     def _get_current_input_state(self):
         """ Snapshot of current input field values. """
-        return {field: getattr(self, field) for field in self._STATE_VAR_FIELDS.union({'x'})}
+        return {field: getattr(self, field) for field in self._STATE_VAR_FIELDS}
 
     def is_cache_stale(self, property_name: str = None):
         """
@@ -124,15 +154,26 @@ class State:
             return property_name not in self._cache
         
         # Show which inputs changed
-        if self._input_state is None:
-            return self._STATE_VAR_FIELDS.union({'x'})  # All inputs "changed" (initial state)
+        if self._INPUT_STATE_VARS is None:
+            return self._STATE_VAR_FIELDS.union  # All inputs "changed" (initial state)
         
         current = self._get_current_input_state()
-        changed = {k for k in self._STATE_VAR_FIELDS.union({'x'}) if current[k] != self._input_state.get(k)}
+        changed = {k for k in self._STATE_VAR_FIELDS if current[k] != self._input_state.get(k)}
         return changed if changed else False
 
     def get_default_unit(self, field_name: str) -> str:
-        """Get the default unit for a given field"""
+        """
+        Get the default unit for a given field
+        
+        Parameters
+        ----------
+        field_name: str
+            Name of the field
+
+        Returns
+        -------
+        str: Default unit as a string that is understandable by pint
+        """
         default_unit_map = {
             'P': 'MPa',
             'T': 'degC',
@@ -143,20 +184,6 @@ class State:
             'Pv': 'kJ / kg',
         }
         return default_unit_map.get(field_name)
-
-    # def get_unit(self, field_name: str) -> str:
-    #     """Get the unit for a given field"""
-    #     unit_map = {
-    #         'P': self.pressure_unit,
-    #         'T': self.temperature_unit,
-    #         'x': f'{self.mass_unit} vapor/{self.mass_unit} total',
-    #         'v': f'{self.volume_unit}/{self.mass_unit}',
-    #         'u': f'{self.energy_unit}/{self.mass_unit}',
-    #         'h': f'{self.energy_unit}/{self.mass_unit}',
-    #         's': f'{self.energy_unit}/{self.mass_unit}-K',
-    #         'Pv': f'{self.energy_unit}/{self.mass_unit}',
-    #     }
-    #     return unit_map.get(field_name)
     
     def get_formatter(self, field_name: str) -> str:
         """Get the formatter for a given field"""
@@ -172,114 +199,10 @@ class State:
         }
         return formatter_map.get(field_name)
 
-    def _to_table_units(self, x: float, units: str):
-        """
-        convert quantity x from specified units to table units (MPa, C, kJ/kg, m3/kg, kJ/kg-K)
-        """
-        match units:
-            case 'C':
-                return x
-            case 'K':
-                return x - 273.15
-            case 'F':
-                return (x - 32.0) * 5.0 / 9.0
-            case 'MPa':
-                return x
-            case 'kPa':
-                return x / 1000.0
-            case 'bar':
-                return x / 10.0
-            case 'atm':
-                return x / 10.1325
-            case 'kJ/kg':
-                return x
-            case 'J/kg':
-                return x / 1000.0
-            case 'J/mol':
-                return x / 1000.0 * MOL_PER_KG
-            case 'm3/kg':
-                return x
-            case 'm3/mol':
-                return x * MOL_PER_KG
-            case 'kJ/kg-K':
-                return x
-            case 'J/kg-K':
-                return x / 1000.0
-            case 'J/mol-K':
-                return x / 1000.0 * MOL_PER_KG
-            case _:
-                raise ValueError(f'Unsupported unit conversion from {units}')
-    
-    def _from_table_units(self, x: float, specified_unit: str):
-        """ convert quantity x from table units (MPa, C, kJ/kg, m3/kg, kJ/kg-K) to specified units """
-        match specified_unit:
-            case 'C':
-                return x
-            case 'K':
-                return x + 273.15
-            case 'F':
-                return x * 9.0 / 5.0 + 32.0
-            case 'MPa':
-                return x
-            case 'kPa':
-                return x * 1000.0
-            case 'bar':
-                return x * 10.0
-            case 'atm':
-                return x * 10.1325
-            case 'kJ/kg':
-                return x
-            case 'J/kg':
-                return x * 1000.0
-            case 'J/mol':
-                return x * 1000.0 / MOL_PER_KG
-            case 'm3/kg':
-                return x
-            case 'm3/mol':
-                return x / MOL_PER_KG
-            case 'kJ/kg-K':
-                return x
-            case 'J/kg-K':
-                return x * 1000.0
-            case 'J/mol-K':
-                return x * 1000.0 / MOL_PER_KG
-            case _:
-                raise ValueError(f'Unsupported unit conversion to {specified_unit}')
-
-    # @property
-    # def TC(self):
-    #     """ Temperature in degrees Celsius """
-    #     return self._to_table_units(self.T, self.temperature_unit)
-
-    # @property
-    # def PMPa(self):
-    #     """ Pressure in MPa """
-    #     return self._to_table_units(self.P, self.pressure_unit)
-
-    # @property
-    # def vm3KG(self):
-    #     """ Specific volume in m3/kg """
-    #     return self._to_table_units(self.v, f'{self.volume_unit}/{self.mass_unit}')
-
-    # @property
-    # def hkJKG(self):
-    #     """ Specific enthalpy in kJ/kg """
-    #     return self._to_table_units(self.h, f'{self.energy_unit}/{self.mass_unit}')
-    
-    # @property
-    # def ukJKG(self):
-    #     """ Specific internal energy in kJ/kg """
-    #     return self._to_table_units(self.u, f'{self.energy_unit}/{self.mass_unit}')
-    
-    # @property
-    # def skJKGK(self):
-    #     """ Specific entropy in kJ/kg-K """
-    #     return self._to_table_units(self.s, f'{self.energy_unit}/{self.mass_unit}-K')
-
     @property
     def Pv(self):
         """ Pressure * specific volume in kJ/kg """
-        return self.P.to('kPa') * self.v.to('m**3 / kg')
+        return (self.P.to('kPa') * self.v.to('m**3 / kg')).to('kJ / kg')
 
     def lookup(self):
         """ Lookup and compute all properties based on current inputs """
@@ -319,14 +242,14 @@ class State:
             v = self.T
             op = specs[0] if specs[1] == 'T' else specs[1]
             if v > TCC:
-                logger.debug(f'Temperature {v}C exceeds critical temperature {TCC}C; cannot be saturated')
+                logger.debug(f'Temperature {v} exceeds critical temperature {TCC}; cannot be saturated')
                 return False
         elif hasP and has_only_T_or_P:
             p = 'P'
             v = self.P
             op = specs[0] if specs[1] == 'P' else specs[1]
             if v > PCMPA:
-                logger.debug(f'Pressure {v}MPa exceeds critical pressure {PCMPA} MPa; cannot be saturated')
+                logger.debug(f'Pressure {v} exceeds critical pressure {PCMPA}; cannot be saturated')
                 return False
         if p is not None and op is not None:
             logger.debug(f'Checking saturation at {p}={v} for property {op}={getattr(self, op)}')
