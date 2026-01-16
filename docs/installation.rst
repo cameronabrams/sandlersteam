@@ -11,6 +11,7 @@ sandlersteam requires:
 * Python 3.7 or later
 * NumPy
 * SciPy
+* Pint
 
 Install from PyPI
 -----------------

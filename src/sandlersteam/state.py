@@ -46,6 +46,9 @@ class State:
     """
     Thermodynamic state of steam/water.
     """
+    name: str = None
+    """ state name assigned upon creation (optional) """
+
     P: pint.Quantity = None
     """ Pressure """
     T: pint.Quantity = None
@@ -61,28 +64,33 @@ class State:
 
     x: float = None
     """ Vapor fraction (quality) """
-    L: State = None
+    Liquid: State = None
     """ Liquid phase state when saturated """
-    V: State = None
+    Vapor: State = None
     """ Vapor phase state when saturated """
-
-    _cache: dict = field(default_factory=dict, init=False, repr=False)
-    """ Cache for computed properties and input state snapshot """
 
     _STATE_VAR_ORDERED_FIELDS = ['T', 'P', 'v', 's', 'h', 'u']
     """ Ordered fields that define the input state """
 
     _STATE_VAR_FIELDS = frozenset(_STATE_VAR_ORDERED_FIELDS).union({'x'})
-    """ Fields that define the input state for caching purposes """
+    """ Fields that define the input state for caching purposes; includes vapor fraction 'x' """
 
-    def __post_init__(self):
-        """ Requests access to global steam tables singleton """
-        self.tables = get_tables()
-        self.satd = self.tables['satd']
-        self.suph = self.tables['suph']
-        self.subc = self.tables['subc']
-   
-    def _dimensionalize(self, value):
+    _cache: dict = field(default_factory=dict, init=False, repr=False)
+    """ Internal cache for tracking input variables and state completeness """
+
+    def __new__(cls, *args, **kwargs):
+        """Set up _cache before any field assignments."""
+        logger.debug(f'Creating new State instance with args: {args}, kwargs: {kwargs}')
+        instance = object.__new__(cls)
+        object.__setattr__(instance, '_cache', {
+            '_input_vars': [],
+            '_is_specified': False,
+            '_is_complete': False
+        })
+        logger.debug(f'Initialized _cache for State instance: {instance._cache}')
+        return instance
+
+    def _dimensionalize(self, name, value):
         # update value to carry default units if necessary
         if (isinstance(value, float) or isinstance(value, int)) and name in self._STATE_VAR_FIELDS:
             # apply default units to raw numbers
@@ -93,73 +101,122 @@ class State:
             # convert any incoming pint.Quantity to default units
             value = value.to(self.get_default_unit(name))
         return value
-
+    
     def __setattr__(self, name, value):
-        """ 
-        Generalized setattr to handle units conversion for state variables.
-        """
-        if name in self._STATE_VAR_FIELDS:
-            value = self._dimensionalize(value)
-            # if this is a state variable, it could be being set as an input or as
-            # a computed property. If value is none and it is in the input set, remove it and 
-            # blank all computed properties.
-            if not hasattr(self, '_cache'):
-                self._initialize_cache(name, value)
-            if self._INPUT_STATE_VARS is not None:
-                if value is None and name in self._INPUT_STATE_VARS:
-                    self._INPUT_STATE_VARS.remove(name)
-                    """ Input state variable removed: blank all computed properties; 
-                    also blanks this variable since it is not in the input set anymore """
-                    for f in self._STATE_VAR_FIELDS:
-                        if f not in self._INPUT_STATE_VARS:
-                            super().__setattr__(f, None)
-                    return
-                if len(self._INPUT_STATE_VARS) < 2:
-                    self._INPUT_STATE_VARS.add(name)
-                if len(self._INPUT_STATE_VARS) == 2:
-                    """ Input state is set: resolve the state now """
+        """Custom attribute setter with input tracking and auto-resolution."""
+
+        logger.debug(f'State {self.name}: __setattr__ called for {name} with value {value} (current value: {getattr(self, name, None)})')
+        if (value is None or value == {} or value == []) and getattr(self, name, None) is not None:
+            logger.debug(f'State {self.name}: Attempt to set {name} to None ignored to preserve resolved value {getattr(self, name)}')
+            return   # Don't overwrite resolved value with None
+
+        # Non-state variables set normally
+        if name not in self._STATE_VAR_FIELDS:
+            logger.debug(f'State {self.name}: Setting non-state variable {name} to {value}')
+            object.__setattr__(self, name, value)
+            return
+
+        current_inputs = self._cache.get('_input_vars', [])
+        if name in current_inputs:
+            if value is not None:
+                value = self._dimensionalize(name, value)
+                object.__setattr__(self, name, value)
+                logger.debug(f'State {self.name}: Updated input variable {name} to {value}')
+                self._cache['_is_complete'] = False
+                self._cache['_is_specified'] = len(current_inputs) == 2
+                if self._cache['_is_specified']:
+                    logger.debug(f'__set_attr__: State {self.name}: Now fully specified with inputs: {current_inputs}, resolving state.')
                     self._resolve()
             else:
-                ### initialize the input state vars set
-                if value is not None:
-                    self._INPUT_STATE_VARS = {name}
+                current_inputs.remove(name)
+                self._cache['_input_vars'] = current_inputs
+                self._blank_computed_state_vars()
+                logger.debug(f'State {self.name}: Removed input variable {name}')
+                self._cache['_is_specified'] = False
+                self._cache['_is_complete'] = False
+                # remove from input vars
+                # blank all computed state vars
         else:
-            super().__setattr__(name, value)
+            if value is not None:
+                value = self._dimensionalize(name, value)
+                object.__setattr__(self, name, value)
+                if not self._cache.get('_is_specified', False):
+                    logger.debug(f'__set_attr__: State {self.name}: Adding new input variable {name} with value {value}')
+                    current_inputs.append(name)
+                    self._cache['_input_vars'] = current_inputs
+                    self._cache['_is_specified'] = len(current_inputs) == 2
+                    if self._cache['_is_specified']:
+                        logger.debug(f'__set_attr__: State {self.name}: Now fully specified with inputs: {current_inputs}, resolving state.')
+                        self._resolve()
+                elif self._cache.get('_is_complete', False):
+                    logger.debug(f'__set_attr__: State {self.name}: Already fully specified; resetting state with first new input variable {name}')
+                    # already fully specified - setting a new input var - blank all computed vars
+                    current_inputs = [name]
+                    self._cache['_input_vars'] = current_inputs
+                    self._cache['_is_specified'] = False
+                    self._cache['_is_complete'] = False
+                    self._blank_computed_state_vars()
+                # set the value
+                # if not _is_specified, add to input vars
+                # check for specification completeness, and if so, resolve
+            else:
+                logger.debug(f'__set_attr__: State {self.name}: Setting non-input variable {name} to None')
+                # setting a non-input var to None - just set it
+                object.__setattr__(self, name, value)
 
-        # if name in self._STATE_VAR_FIELDS and hasattr(self, '_cache'):
-        #     self._cache.clear()
-        # if value is None:
-        #     super().__setattr__(name, value)
+    def __post_init__(self):
+        logger.debug(f'__post_init__: State {self.name}: __post_init__ called, checking specification completeness.')
+        if self._cache['_is_specified'] and not self._cache['_is_complete']:
+            current_inputs = self._cache.get('_input_vars', [])
+            logger.debug(f'__post_init__: State {self.name}: Now fully specified with inputs: {current_inputs}, resolving state.')
+            self._resolve()
+            self._cache['_is_complete'] = True
 
-        # super().__setattr__(name, value)
-
-    def _get_current_input_state(self):
-        """ Snapshot of current input field values. """
-        return {field: getattr(self, field) for field in self._STATE_VAR_FIELDS}
-
-    def is_cache_stale(self, property_name: str = None):
+    def _blank_computed_state_vars(self):
         """
-        Check if cache is stale.
-        
-        Parameters
-        ----------
-        property_name: str
-            Specific property to check, or None for general staleness
-        
-        Returns
-        -------
-        bool or dict: True/False if property_name given, else dict of changed inputs
+        Clear all computed state variables
         """
-        if property_name:
-            return property_name not in self._cache
+        for var in self._STATE_VAR_FIELDS:
+            if var not in self._cache.get('_input_vars', []):
+                object.__setattr__(self, var, None)
+        self._cache['_is_complete'] = False
+
+
+    def _resolve(self):
+        """
+        Resolve all state variables from the two input variables.
+        This is where you'd call your steam tables and calculate everything.
+        """
+        if not self._cache.get('_is_specified', False):
+            logger.debug(f'State {self.name}: State not fully specified; cannot resolve.')
+            return
         
-        # Show which inputs changed
-        if self._INPUT_STATE_VARS is None:
-            return self._STATE_VAR_FIELDS.union  # All inputs "changed" (initial state)
+        # try:
+        states_speced = self._cache.get('_input_vars', [])
+        if len(states_speced) != 2:
+            return
         
-        current = self._get_current_input_state()
-        changed = {k for k in self._STATE_VAR_FIELDS if current[k] != self._input_state.get(k)}
-        return changed if changed else False
+        if self._check_saturation(states_speced):
+            self._resolve_satd(states_speced)
+        else:
+            self._resolve_unsatd(states_speced)
+        self._scalarize()
+        logger.debug(f'_resolve: State {self.name}: Successfully resolved state with inputs: {states_speced}')
+        self._cache['_is_complete'] = True
+        logger.debug(f'_resolve: State {self.name}: State resolution complete {self._cache["_is_complete"]}')         
+        # except:
+        #     raise Exception(f'Could not resolve state {self.name} with inputs: {self._cache.get("_input_vars", [])}')
+
+    def __repr__(self):
+        """Show which variables are inputs vs computed."""
+        inputs = self._cache.get('_input_vars', [])
+        parts = []
+        for var in self._STATE_VAR_ORDERED_FIELDS + ['x']:
+            val = getattr(self, var)
+            if val is not None:
+                marker = '*' if var in inputs else ''
+                parts.append(f"{var}{marker}={val}")
+        return f"State({self.name}: {', '.join(parts)})"
 
     def get_default_unit(self, field_name: str) -> str:
         """
@@ -204,111 +261,73 @@ class State:
         """ Pressure * specific volume in kJ/kg """
         return (self.P.to('kPa') * self.v.to('m**3 / kg')).to('kJ / kg')
 
-    def lookup(self):
-        """ Lookup and compute all properties based on current inputs """
-        if not 'lookup' in self._cache:
-            self._cache['lookup'] = self._resolve()
-        return self
-
-    def _get_statespec(self):
-        """ Get current state specification """
-        vals = [getattr(self, p) for p in self._STATE_VAR_FIELDS]
-        return_list = [p for p, x in zip(self._STATE_VAR_FIELDS, vals) if x is not None]
-        logger.debug(f'Current state spec: {return_list} {vals}')
-
-        if getattr(self, 'x') is not None:
-            if (getattr(self, 'T') is None and getattr(self, 'P') is None):
-                raise ValueError(f'Must specify T or P for an explicitly saturated state x={self.x:2g}')
-            else:
-                return_list.append('x')
-                return return_list
-        else: 
-            # expect an unsaturated state       
-            if sum(v is not None for v in vals) != 2:
-                raise ValueError(f'Exactly two of {self._STATE_VAR_FIELDS} must be specified')
-            return return_list 
-
-    def _check_saturation(self, specs):
+    def _check_saturation(self, specs: dict[str, float]) -> bool:
+        satd = get_tables()['satd']
         """ Check if the specified state is saturated """
         if 'x' in specs:
             return True
-        p = None
-        op = None
-        hasT = 'T' in specs
-        hasP = 'P' in specs
+        p, op = None, None
+        hasT, hasP = 'T' in specs, 'P' in specs
         has_only_T_or_P = hasT ^ hasP
         if hasT and has_only_T_or_P:
-            p = 'T'
-            v = self.T
-            op = specs[0] if specs[1] == 'T' else specs[1]
+            p, v = 'T', self.T
             if v > TCC:
                 logger.debug(f'Temperature {v} exceeds critical temperature {TCC}; cannot be saturated')
                 return False
+            op = specs[0] if specs[1] == p else specs[1]
         elif hasP and has_only_T_or_P:
-            p = 'P'
-            v = self.P
-            op = specs[0] if specs[1] == 'P' else specs[1]
+            p, v = 'P', self.P
             if v > PCMPA:
                 logger.debug(f'Pressure {v} exceeds critical pressure {PCMPA}; cannot be saturated')
                 return False
+            op = specs[0] if specs[1] == p else specs[1]
         if p is not None and op is not None:
             logger.debug(f'Checking saturation at {p}={v} for property {op}={getattr(self, op)}')
-            logger.debug(f'Saturation limits for {p}: {self.satd.lim[p]}')
-            logger.debug(f'Between? {self.satd.lim[p][0] <= v.m <= self.satd.lim[p][1]}')
-            if not (self.satd.lim[p][0] <= v.m <= self.satd.lim[p][1]):
+            logger.debug(f'Saturation limits for {p}: {satd.lim[p]}')
+            logger.debug(f'Between? {satd.lim[p][0] <= v.m <= satd.lim[p][1]}')
+            if not (satd.lim[p][0] <= v.m <=  satd.lim[p][1]):
                 logger.debug(f'Out of saturation limits for {p}={v}')
                 return False
-            op_valV = self.satd.interpolators[p][f'{op}V'](v.m)
-            op_valL = self.satd.interpolators[p][f'{op}L'](v.m)
-            if op_valL < getattr(self, op).m < op_valV or op_valV < getattr(self, op).m < op_valL:
+            op_val_satd_vapor = satd.interpolators[p][f'{op}V'](v.m)
+            op_val_satd_liquid = satd.interpolators[p][f'{op}L'](v.m)
+            op_val = getattr(self, op).m
+            if op_val_satd_liquid < op_val < op_val_satd_vapor or op_val_satd_vapor < op_val < op_val_satd_liquid:
                 return True
         return False
 
-    def _resolve(self):
-        """ 
-        Resolve the thermodynamic state of steam/water given specifications
-        """
-        spec = self._get_statespec()
+    # def _resolve(self):
+    #     """ 
+    #     Resolve the thermodynamic state of steam/water given specifications
+    #     """
+    #     spec = self._get_statespec()
 
-        if self._check_saturation(spec):
-            self._resolve_satd(spec)
-        else:
-            self._resolve_unsatd(spec)
-        self._scalarize()
-        self._input_state = self._get_current_input_state()
+    #     if self._check_saturation(spec):
+    #         self._resolve_satd(spec)
+    #     else:
+    #         self._resolve_unsatd(spec)
+    #     self._scalarize()
+    #     self._input_state = self._get_current_input_state()
 
     def report(self):
         reporter = statereporter.StateReporter()
         for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
             if getattr(self, p) is not None:
-                reporter.add_property(p, self._from_table_units(getattr(self, p), self.get_unit(p)), self.get_unit(p), self.get_formatter(p))
+                reporter.add_property(p, getattr(self, p).m, self.get_default_unit(p), self.get_formatter(p))
         if self.x is not None:
-            reporter.add_property('x', self.x, f'{self.mass_unit} vapor/{self.mass_unit} total')
-            for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
-                    if not p in 'TP':
-                        if getattr(state, p) is not None:
-                            reporter.add_property(f'{p}{phase}', self._from_table_units(getattr(state, p), self.get_unit(p)), self.get_unit(p), self.get_formatter(p))
+            reporter.add_property('x', self.x, f'mass fraction vapor')
+            if 0 < self.x < 1:
+                for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
+                    for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
+                        if not p in 'TP':
+                            if getattr(state, p) is not None:
+                                reporter.add_property(f'{p}{phase}', getattr(state, p).m, self.get_default_unit(p), self.get_formatter(p))
         return reporter.report()
-
-    def __repr__(self):
-        self.lookup()
-        return f'State(T={self.T}, P={self.P}, v={self.v}, u={self.u}, h={self.h}, s={self.s}, x={self.x})'
-
-    def clone(self, **kwargs) -> State:
-        """ Create a copy of this State instance """
-        new_state = State()
-        for f in self._STATE_VAR_FIELDS.union({'x'}):
-            setattr(new_state, f, getattr(self, f))
-        for k, v in kwargs.items():
-            if k in self._STATE_VAR_FIELDS.union({'x'}):
-                setattr(new_state, k, v)
-        return new_state
 
     def _resolve_unsatd(self, specs: list[str]):
         """ 
         Resolve the thermodynamic state of steam/water given specifications
         """
+        logger.debug(f'Resolving unsaturated state with specs: {specs}')
         hasT = 'T' in specs
         hasP = 'P' in specs
         if hasT and hasP:
@@ -323,18 +342,21 @@ class State:
     def _resolve_at_T_and_P(self):
         """ T and P are both given explicitly.  Could be either superheated or subcooled state """
         specdict = {'T': self.T.m, 'P': self.P.m}
+        satd = get_tables()['satd']
+        suph = get_tables()['suph']
+        subc = get_tables()['subc']
 
-        if self.satd.lim['T'][0] < self.T.m < self.satd.lim['T'][1]:
-            Psat = self.satd.interpolators['T']['P'](self.T.m)
+        if satd.lim['T'][0] < self.T.m < satd.lim['T'][1]:
+            Psat = satd.interpolators['T']['P'](self.T.m)
             # print(f'Returns Psat of {Psat}')
         else:
             Psat = LARGE
         if self.P.m > Psat:
             ''' P is higher than saturation: this is a subcooled state '''
-            retdict = self.subc.Bilinear(specdict)
+            retdict = subc.Bilinear(specdict)
         else:
             ''' P is lower than saturation: this is a superheated state '''
-            retdict = self.suph.Bilinear(specdict)
+            retdict = suph.Bilinear(specdict)
         for p, v in retdict.items():
             if p not in specdict and p != 'x':
                 # interpolators return scalars in default units, so we
@@ -342,6 +364,10 @@ class State:
                 setattr(self, p, v * ureg(self.get_default_unit(p)))
     
     def _resolve_at_TorP_and_Theta(self, specs: list[str]):
+        satd = get_tables()['satd']
+        suph = get_tables()['suph']
+        subc = get_tables()['subc']
+
         """ T or P along with some other property (v,u,s,h) are specified """
         hasT = 'T' in specs
         hasP = 'P' in specs
@@ -365,8 +391,8 @@ class State:
         th = getattr(self, op)
 
         if not supercritical:
-            thL = self.satd.interpolators[p][f'{op}L'](v.m)
-            thV = self.satd.interpolators[p][f'{op}V'](v.m)
+            thL = satd.interpolators[p][f'{op}L'](v.m)
+            thV = satd.interpolators[p][f'{op}V'](v.m)
             if th.m < thL:
                 is_subcooled = True
             elif th.m > thV:
@@ -383,22 +409,24 @@ class State:
             raise ValueError(f'Specified state is saturated based on {p}={v} and {op}={th}')
         specdict = {p: v.m, op: th.m}
         if is_superheated:
-            retdict = self.suph.Bilinear(specdict)
+            retdict = suph.Bilinear(specdict)
         else:
-            retdict = self.subc.Bilinear(specdict)
+            retdict = subc.Bilinear(specdict)
         for p, v in retdict.items():
             if p not in specs and p != 'x':
                 setattr(self, p, v * ureg(self.get_default_unit(p)))
 
     def _resolve_at_Theta1_and_Theta2(self, specs: list[str]):
+        suph = get_tables()['suph']
+        subc = get_tables()['subc']
         specdict = {specs[0]: getattr(self, specs[0]).m, specs[1]: getattr(self, specs[1]).m}
         try:
-            sub_try = self.subc.Bilinear(specdict)
+            sub_try = subc.Bilinear(specdict)
         except Exception as e:
             logger.debug(f'Subcooled Bilinear failed: {e}')
             sub_try = None
         try:
-            sup_try = self.suph.Bilinear(specdict)
+            sup_try = suph.Bilinear(specdict)
         except Exception as e:
             logger.debug(f'Superheated Bilinear failed: {e}')
             sup_try = None
@@ -422,72 +450,77 @@ class State:
         Parameters
         ----------
         specs: list[str]
-            List of specified properties, must include 'x' and either 'T' or 'P'
+            List of specified properties
         """
+        satd = get_tables()['satd']
 
         if 'x' in specs:
             """ Vapor fraction is explicitly given """
-            if 'T' in specs or 'P' in specs:
+            p = 'x'
+            other_p = specs[0] if specs[1] == p else specs[1]
+            if other_p in ['T', 'P']:
                 """ Vapor fraction and one of T or P is given """
-                p = 'T' if 'T' in specs else 'P'
-                v = getattr(self, p)
-                complement = 'P' if p == 'T' else 'T'
-                prop = self.satd.interpolators[p][complement](v.m)
-                setattr(self, complement, prop * ureg(self.get_default_unit(complement)))
-                self.Liquid = self.clone(x=0.0)
-                self.Vapor = self.clone(x=1.0)
-                for op in self._STATE_VAR_FIELDS - {'T','P'}:
-                    for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                        prop = self.satd.interpolators[p][f'{op}{phase}'](v.m)
-                        setattr(state, op, prop * ureg(self.get_default_unit(op)))
-                    setattr(self, op, self.x * getattr(self.Vapor, op) + (1 - self.x) * getattr(self.Liquid, op))
+                other_v = getattr(self, other_p)
+                complement = 'P' if other_p == 'T' else 'T'
+                complement_value_satd = satd.interpolators[other_p][complement](other_v.m)
+                setattr(self, complement, complement_value_satd * ureg(self.get_default_unit(complement)))
+                exclude_from_lever_rule = {'T', 'P', 'x'}
+                exclude_from_single_phase_saturated_resolve = {'T', 'P', 'x'}
+                initialize_single_phase_saturated_with = {other_p: other_v}
             else:
                 """ Vapor fraction and one lever-rule-calculable property (u, v, s, h) is given """
-                th = getattr(self, p)
-                Y = np.array(self.satd.DF['T'][f'{p}V']) * self.x + np.array(self.satd.DF['T'][f'{p}L']) * (1 - self.x)
-                X = np.array(self.satd.DF['T']['T'])
+                other_v = getattr(self, other_p)
+                Y = np.array(satd.DF['T'][f'{other_p}V']) * self.x + np.array(satd.DF['T'][f'{other_p}L']) * (1 - self.x)
+                X = np.array(satd.DF['T']['T'])
                 f = svi(interp1d(X, Y))
                 try:
-                    self.T = f(th.m)
-                    self.P = self.satd.interpolators['T']['P'](self.T.m)
-                    self.Liquid = self.clone(x=0.0)
-                    self.Vapor = self.clone(x=1.0)
-                    for op in self._STATE_VAR_FIELDS - {'T','P'}:
-                        for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                            prop = self.satd.interpolators['T'][f'{op}{phase}'](self.T.m)
-                            setattr(state, op, prop * ureg(self.get_default_unit(op)))
-                        if op != th:
-                            setattr(self, op, self.x * getattr(self.Vapor, op) + (1 - self.x) * getattr(self.Liquid, op))
+                    self.T = f(other_v.m)
+                    self.P = satd.interpolators['T']['P'](self.T.m) * ureg(self.get_default_unit('P'))
                 except:
-                    raise Exception(f'Could not interpolate {p} = {th} at quality {self.x} from saturated steam table')
+                    raise Exception(f'Could not interpolate {other_p} = {other_v} at quality {self.x} from saturated steam table')
+                exclude_from_lever_rule = {'T', 'P', 'x', other_p}
+                exclude_from_single_phase_saturated_resolve = {'T', 'P', other_p, 'x'}
+                initialize_single_phase_saturated_with = {'T': self.T, 'P': self.P}
+            # we have for sure determined T; either it was given or we just calculated it
+
         else:
-            """ T or P along with a lever-rule-calculable property (u, v, s, h) is given """
-            p = 'T' if 'T' in specs else 'P'
-            pcomp = 'P' if p == 'T' else 'T'
-            v = getattr(self, p)
-            op = specs[0] if specs[1] == p else specs[1]
-            th = getattr(self, op)
-            thL = self.satd.interpolators[p][f'{op}L'](v.m)
-            thV = self.satd.interpolators[p][f'{op}V'](v.m)
-            th_list = [thL, thV]
-            th_list.sort()
-            if th_list[0] < th.m < th_list[1]:
-                """ This is a saturated state! Use interpolation to get saturation value of complement property and lever rule to get vapor fraction: """
-                prop = self.satd.interpolators[p][pcomp](v.m)
-                setattr(self, pcomp, prop * ureg(self.get_default_unit(pcomp)))
-                self.x = (th.m - thL) / (thV - thL)
-                self.Liquid = self.clone(x=0.0)
-                self.Vapor = self.clone(x=1.0)
-                for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                    prop = self.satd.interpolators[p][f'{op}{phase}'](v.m)
-                    setattr(state, op, prop * ureg(self.get_default_unit(op)))
-                for op2 in self._STATE_VAR_FIELDS - {'T','P', op}:
-                    for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                        prop = self.satd.interpolators[p][f'{op2}{phase}'](v.m)
-                        setattr(state, op2, prop * ureg(self.get_default_unit(op2)))
-                    setattr(self, op2, self.x * getattr(self.Vapor, op2) + (1 - self.x) * getattr(self.Liquid, op2))
+            """ x is not in specs -- expect that T or P along with a lever-rule-calculable property (u, v, s, h) is given """
+            hasT, hasP = 'T' in specs, 'P' in specs
+            has_only_T_or_P = hasT ^ hasP
+            if hasT and has_only_T_or_P:
+                p, complement = 'T', 'P'
+            elif hasP and has_only_T_or_P:
+                p, complement = 'P', 'T'
             else:
-                raise ValueError(f'Specified property {op}={th} is not between saturated liquid ({thL}) and vapor ({thV}) values at {p}={v}')
+                raise ValueError('Either T or P must be specified along with another property for saturated state without explicit x')
+            v = getattr(self, p)
+            complement_value_satd = satd.interpolators[p][complement](v.m)
+            setattr(self, complement, complement_value_satd * ureg(self.get_default_unit(complement)))
+            other_p = specs[0] if specs[1] == p else specs[1]
+            other_v = getattr(self, other_p)
+            other_v_Lsat = satd.interpolators[p][f'{other_p}L'](v.m)
+            other_v_Vsat = satd.interpolators[p][f'{other_p}V'](v.m)
+            self.x = (other_v.m - other_v_Lsat) / (other_v_Vsat - other_v_Lsat)
+            exclude_from_lever_rule = {'T', 'P', 'x', other_p}
+            exclude_from_single_phase_saturated_resolve = {'T', 'P', 'x', other_p}
+            initialize_single_phase_saturated_with = {p: v}
+        if 0.0 < self.x < 1.0:
+            # generate the two saturated single-phase substates and apply lever rule
+            # to resolve remaining properties of the overall state
+            self.Liquid = State(x=0.0, name=f'{self.name}_L' if self.name else 'Saturated Liquid', **initialize_single_phase_saturated_with)
+            self.Vapor = State(x=1.0, name=f'{self.name}_V' if self.name else 'Saturated Vapor', **initialize_single_phase_saturated_with)
+            for op in self._STATE_VAR_FIELDS - exclude_from_lever_rule:
+                setattr(self, op, self.x * getattr(self.Vapor, op) + (1 - self.x) * getattr(self.Liquid, op))
+        elif self.x == 0.0:
+            # This is a saturated liquid state, need to resolve all properties not already set
+            for op in self._STATE_VAR_FIELDS - exclude_from_single_phase_saturated_resolve:
+                prop = satd.interpolators[other_p][f'{op}L'](other_v.m)
+                setattr(self, op, prop * ureg(self.get_default_unit(op)))
+        elif self.x == 1.0:
+            # This is a saturated vapor state, need to resolve all properties not already set
+            for op in self._STATE_VAR_FIELDS - exclude_from_single_phase_saturated_resolve:
+                prop = satd.interpolators[other_p][f'{op}V'](other_v.m)
+                setattr(self, op, prop * ureg(self.get_default_unit(op)))
 
     def _scalarize(self):
         """ Convert all properties to scalars (not np.float64) """
@@ -495,15 +528,13 @@ class State:
             val = getattr(self, p)
             if isinstance(val, np.float64):
                 setattr(self, p, val.item())
-        if hasattr(self, 'Liquid'):
+        if hasattr(self, 'Liquid') and self.Liquid is not None:
             self.Liquid._scalarize()
-        if hasattr(self, 'Vapor'):
+        if hasattr(self, 'Vapor') and self.Vapor is not None:
             self.Vapor._scalarize()
 
     def delta(self, other: State) -> dict:
         """ Calculate property differences between this state and another state """
-        self.lookup()
-        other.lookup()
         delta_props = {}
         for p in self._STATE_VAR_FIELDS:
             val1 = getattr(self, p)

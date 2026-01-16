@@ -45,7 +45,7 @@ def state_subcommand(args):
         val = getattr(args, p)
         if val is not None:
             state_kwargs[p] = val
-    state = State(**state_kwargs).lookup()
+    state = State(**state_kwargs)
     report = state.report()
     print(report)
 
@@ -59,15 +59,15 @@ def delta_subcommand(args):
             state1_kwargs[p] = val1
         if val2 is not None:
             state2_kwargs[p] = val2
-    state1 = State(**state1_kwargs).lookup()
-    state2 = State(**state2_kwargs).lookup()
+    state1 = State(**state1_kwargs)
+    state2 = State(**state2_kwargs)
     delta_props = state1.delta(state2)
     delta_State = StateReporter({})
     # print('Property differences (state2 - state1):')
     for prop in State._STATE_VAR_ORDERED_FIELDS + ['Pv']:
         if prop in delta_props:
             value = delta_props[prop]
-            delta_State.add_property(f'Δ{prop}', state1.get_formatter(prop).format(value), state1.get_unit(prop), fstring=None)
+            delta_State.add_property(f'Δ{prop}', state1.get_formatter(prop).format(value.m), state1.get_default_unit(prop), fstring=None)
     state1_report = state1.report()
     state2_report = state2.report()
     print(f"State-change calculations for water/steam:")
