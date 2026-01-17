@@ -8,7 +8,11 @@ All notable changes to sandlersteam will be documented in this file.
 The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.0.0/>`_,
 and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
-[0.9.0] - 2026-10-16
+[0.10.0] - 2026-01-17
+
+* Offloaded thermodynamic state representation to sandlermisc package; State now subclasses ThermodynamicState from sandlermisc
+
+[0.9.0] - 2026-01-16
 --------------------
 
 Added

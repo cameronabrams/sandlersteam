@@ -5,13 +5,11 @@ from dataclasses import dataclass, field, fields
 from scipy.interpolate import interp1d
 from .satd import SaturatedSteamTables
 from .unsatd import UnsaturatedSteamTables
-from sandlermisc import statereporter
+from sandlermisc import ThermodynamicState, _ureg
 import pint
 import logging
 
 logger = logging.getLogger(__name__)
-
-ureg = pint.UnitRegistry(autoconvert_offset_to_baseunit = True)
 
 _instance = None
 
@@ -29,159 +27,42 @@ def get_tables():
         )
     return _instance
 
-LARGE=1.e99
-NEGLARGE=-LARGE
-
+LARGE = 1e20
 G_PER_MOL = 18.01528  # g/mol for water
 KG_PER_MOL = G_PER_MOL / 1000.000  # kg/mol for water
 MOL_PER_KG = 1.0 / KG_PER_MOL  # mol/kg for water
-TCK = 647.3 * ureg('K')  # critical temperature in K
+TCK = 647.3 * _ureg('K')  # critical temperature in K
 TCC = TCK.to('degC')
 
-PCBAR = 221.20 * ureg('bar')  # critical pressure in bar
+PCBAR = 221.20 * _ureg('bar')  # critical pressure in bar
 PCMPA = PCBAR.to('MPa')
 
 @dataclass
-class State:
+class State(ThermodynamicState):
     """
     Thermodynamic state of steam/water.
     """
-    name: str = None
+
+    name: str = 'Sandler-Steam'
     """ state name assigned upon creation (optional) """
 
-    P: pint.Quantity = None
-    """ Pressure """
-    T: pint.Quantity = None
-    """ Temperature """
-    v: pint.Quantity = None
-    """ Specific volume """
-    u: pint.Quantity = None
-    """ Specific internal energy """
-    h: pint.Quantity = None
-    """ Specific enthalpy """
-    s: pint.Quantity = None
-    """ Specific entropy """
-
-    x: float = None
-    """ Vapor fraction (quality) """
-    Liquid: State = None
-    """ Liquid phase state when saturated """
-    Vapor: State = None
-    """ Vapor phase state when saturated """
-
-    _STATE_VAR_ORDERED_FIELDS = ['T', 'P', 'v', 's', 'h', 'u']
-    """ Ordered fields that define the input state """
-
-    _STATE_VAR_FIELDS = frozenset(_STATE_VAR_ORDERED_FIELDS).union({'x'})
-    """ Fields that define the input state for caching purposes; includes vapor fraction 'x' """
-
-    _cache: dict = field(default_factory=dict, init=False, repr=False)
-    """ Internal cache for tracking input variables and state completeness """
-
-    def __new__(cls, *args, **kwargs):
-        """Set up _cache before any field assignments."""
-        logger.debug(f'Creating new State instance with args: {args}, kwargs: {kwargs}')
-        instance = object.__new__(cls)
-        object.__setattr__(instance, '_cache', {
-            '_input_vars': [],
-            '_is_specified': False,
-            '_is_complete': False
-        })
-        logger.debug(f'Initialized _cache for State instance: {instance._cache}')
-        return instance
-
-    def _dimensionalize(self, name, value):
-        # update value to carry default units if necessary
-        if (isinstance(value, float) or isinstance(value, int)) and name in self._STATE_VAR_FIELDS:
-            # apply default units to raw numbers
-            default_unit = self.get_default_unit(name)
-            if default_unit is not None:
-                value = value * ureg(default_unit)
-        elif isinstance(value, pint.Quantity) and name in self._STATE_VAR_FIELDS:
-            # convert any incoming pint.Quantity to default units
-            value = value.to(self.get_default_unit(name))
-        return value
+    Tc: pint.Quantity = TCC
+    """ Critical temperature """
+    Pc: pint.Quantity = PCMPA
+    """ Critical pressure """
+    Molwt: float = G_PER_MOL
+    """ Molar weight in g/mol """
     
-    def __setattr__(self, name, value):
-        """Custom attribute setter with input tracking and auto-resolution."""
-
-        logger.debug(f'State {self.name}: __setattr__ called for {name} with value {value} (current value: {getattr(self, name, None)})')
-        if (value is None or value == {} or value == []) and getattr(self, name, None) is not None:
-            logger.debug(f'State {self.name}: Attempt to set {name} to None ignored to preserve resolved value {getattr(self, name)}')
-            return   # Don't overwrite resolved value with None
-
-        # Non-state variables set normally
-        if name not in self._STATE_VAR_FIELDS:
-            logger.debug(f'State {self.name}: Setting non-state variable {name} to {value}')
-            object.__setattr__(self, name, value)
-            return
-
-        current_inputs = self._cache.get('_input_vars', [])
-        if name in current_inputs:
-            if value is not None:
-                value = self._dimensionalize(name, value)
-                object.__setattr__(self, name, value)
-                logger.debug(f'State {self.name}: Updated input variable {name} to {value}')
-                self._cache['_is_complete'] = False
-                self._cache['_is_specified'] = len(current_inputs) == 2
-                if self._cache['_is_specified']:
-                    logger.debug(f'__set_attr__: State {self.name}: Now fully specified with inputs: {current_inputs}, resolving state.')
-                    self._resolve()
-            else:
-                current_inputs.remove(name)
-                self._cache['_input_vars'] = current_inputs
-                self._blank_computed_state_vars()
-                logger.debug(f'State {self.name}: Removed input variable {name}')
-                self._cache['_is_specified'] = False
-                self._cache['_is_complete'] = False
-                # remove from input vars
-                # blank all computed state vars
-        else:
-            if value is not None:
-                value = self._dimensionalize(name, value)
-                object.__setattr__(self, name, value)
-                if not self._cache.get('_is_specified', False):
-                    logger.debug(f'__set_attr__: State {self.name}: Adding new input variable {name} with value {value}')
-                    current_inputs.append(name)
-                    self._cache['_input_vars'] = current_inputs
-                    self._cache['_is_specified'] = len(current_inputs) == 2
-                    if self._cache['_is_specified']:
-                        logger.debug(f'__set_attr__: State {self.name}: Now fully specified with inputs: {current_inputs}, resolving state.')
-                        self._resolve()
-                elif self._cache.get('_is_complete', False):
-                    logger.debug(f'__set_attr__: State {self.name}: Already fully specified; resetting state with first new input variable {name}')
-                    # already fully specified - setting a new input var - blank all computed vars
-                    current_inputs = [name]
-                    self._cache['_input_vars'] = current_inputs
-                    self._cache['_is_specified'] = False
-                    self._cache['_is_complete'] = False
-                    self._blank_computed_state_vars()
-                # set the value
-                # if not _is_specified, add to input vars
-                # check for specification completeness, and if so, resolve
-            else:
-                logger.debug(f'__set_attr__: State {self.name}: Setting non-input variable {name} to None')
-                # setting a non-input var to None - just set it
-                object.__setattr__(self, name, value)
-
-    def __post_init__(self):
-        logger.debug(f'__post_init__: State {self.name}: __post_init__ called, checking specification completeness.')
-        if self._cache['_is_specified'] and not self._cache['_is_complete']:
-            current_inputs = self._cache.get('_input_vars', [])
-            logger.debug(f'__post_init__: State {self.name}: Now fully specified with inputs: {current_inputs}, resolving state.')
-            self._resolve()
-            self._cache['_is_complete'] = True
-
-    def _blank_computed_state_vars(self):
-        """
-        Clear all computed state variables
-        """
-        for var in self._STATE_VAR_FIELDS:
-            if var not in self._cache.get('_input_vars', []):
-                object.__setattr__(self, var, None)
-        self._cache['_is_complete'] = False
-
-
+    _default_unit_map = {
+            'P': 'MPa',
+            'T': 'degC',
+            'v': 'm**3 / kg',
+            'u': 'kJ / kg',
+            'h': 'kJ / kg',
+            's': 'kJ / (kg * K)',
+            'Pv': 'kJ / kg',
+        }
+   
     def _resolve(self):
         """
         Resolve all state variables from the two input variables.
@@ -203,63 +84,7 @@ class State:
         self._scalarize()
         logger.debug(f'_resolve: State {self.name}: Successfully resolved state with inputs: {states_speced}')
         self._cache['_is_complete'] = True
-        logger.debug(f'_resolve: State {self.name}: State resolution complete {self._cache["_is_complete"]}')         
-        # except:
-        #     raise Exception(f'Could not resolve state {self.name} with inputs: {self._cache.get("_input_vars", [])}')
-
-    def __repr__(self):
-        """Show which variables are inputs vs computed."""
-        inputs = self._cache.get('_input_vars', [])
-        parts = []
-        for var in self._STATE_VAR_ORDERED_FIELDS + ['x']:
-            val = getattr(self, var)
-            if val is not None:
-                marker = '*' if var in inputs else ''
-                parts.append(f"{var}{marker}={val}")
-        return f"State({self.name}: {', '.join(parts)})"
-
-    def get_default_unit(self, field_name: str) -> str:
-        """
-        Get the default unit for a given field
-        
-        Parameters
-        ----------
-        field_name: str
-            Name of the field
-
-        Returns
-        -------
-        str: Default unit as a string that is understandable by pint
-        """
-        default_unit_map = {
-            'P': 'MPa',
-            'T': 'degC',
-            'v': 'm**3 / kg',
-            'u': 'kJ / kg',
-            'h': 'kJ / kg',
-            's': 'kJ / (kg * K)',
-            'Pv': 'kJ / kg',
-        }
-        return default_unit_map.get(field_name)
-    
-    def get_formatter(self, field_name: str) -> str:
-        """Get the formatter for a given field"""
-        formatter_map = {
-            'P': '{: 5g}',
-            'T': '{: 5g}',
-            'x': '{: 5g}',
-            'v': '{: 6g}',
-            'u': '{: 6g}',
-            'h': '{: 6g}',
-            's': '{: 6g}',
-            'Pv': '{: 6g}',
-        }
-        return formatter_map.get(field_name)
-
-    @property
-    def Pv(self):
-        """ Pressure * specific volume in kJ/kg """
-        return (self.P.to('kPa') * self.v.to('m**3 / kg')).to('kJ / kg')
+        logger.debug(f'_resolve: State {self.name}: State resolution complete {self._cache["_is_complete"]}')
 
     def _check_saturation(self, specs: dict[str, float]) -> bool:
         satd = get_tables()['satd']
@@ -294,34 +119,6 @@ class State:
             if op_val_satd_liquid < op_val < op_val_satd_vapor or op_val_satd_vapor < op_val < op_val_satd_liquid:
                 return True
         return False
-
-    # def _resolve(self):
-    #     """ 
-    #     Resolve the thermodynamic state of steam/water given specifications
-    #     """
-    #     spec = self._get_statespec()
-
-    #     if self._check_saturation(spec):
-    #         self._resolve_satd(spec)
-    #     else:
-    #         self._resolve_unsatd(spec)
-    #     self._scalarize()
-    #     self._input_state = self._get_current_input_state()
-
-    def report(self):
-        reporter = statereporter.StateReporter()
-        for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
-            if getattr(self, p) is not None:
-                reporter.add_property(p, getattr(self, p).m, self.get_default_unit(p), self.get_formatter(p))
-        if self.x is not None:
-            reporter.add_property('x', self.x, f'mass fraction vapor')
-            if 0 < self.x < 1:
-                for phase, state in [('L', self.Liquid), ('V', self.Vapor)]:
-                    for p in self._STATE_VAR_ORDERED_FIELDS + ['Pv']:
-                        if not p in 'TP':
-                            if getattr(state, p) is not None:
-                                reporter.add_property(f'{p}{phase}', getattr(state, p).m, self.get_default_unit(p), self.get_formatter(p))
-        return reporter.report()
 
     def _resolve_unsatd(self, specs: list[str]):
         """ 
@@ -361,7 +158,7 @@ class State:
             if p not in specdict and p != 'x':
                 # interpolators return scalars in default units, so we
                 # put units on them here
-                setattr(self, p, v * ureg(self.get_default_unit(p)))
+                setattr(self, p, v * _ureg(self.get_default_unit(p)))
     
     def _resolve_at_TorP_and_Theta(self, specs: list[str]):
         satd = get_tables()['satd']
@@ -414,7 +211,7 @@ class State:
             retdict = subc.Bilinear(specdict)
         for p, v in retdict.items():
             if p not in specs and p != 'x':
-                setattr(self, p, v * ureg(self.get_default_unit(p)))
+                setattr(self, p, v * _ureg(self.get_default_unit(p)))
 
     def _resolve_at_Theta1_and_Theta2(self, specs: list[str]):
         suph = get_tables()['suph']
@@ -441,7 +238,7 @@ class State:
         logger.debug(f'Resolved state with {retdict}')
         for p, v in retdict.items():
             if p not in specs and p != 'x':
-                setattr(self, p, v * ureg(self.get_default_unit(p)))
+                setattr(self, p, v * _ureg(self.get_default_unit(p)))
 
     def _resolve_satd(self, specs: list[str]):
         """
@@ -463,7 +260,7 @@ class State:
                 other_v = getattr(self, other_p)
                 complement = 'P' if other_p == 'T' else 'T'
                 complement_value_satd = satd.interpolators[other_p][complement](other_v.m)
-                setattr(self, complement, complement_value_satd * ureg(self.get_default_unit(complement)))
+                setattr(self, complement, complement_value_satd * _ureg(self.get_default_unit(complement)))
                 exclude_from_lever_rule = {'T', 'P', 'x'}
                 exclude_from_single_phase_saturated_resolve = {'T', 'P', 'x'}
                 initialize_single_phase_saturated_with = {other_p: other_v}
@@ -475,7 +272,7 @@ class State:
                 f = svi(interp1d(X, Y))
                 try:
                     self.T = f(other_v.m)
-                    self.P = satd.interpolators['T']['P'](self.T.m) * ureg(self.get_default_unit('P'))
+                    self.P = satd.interpolators['T']['P'](self.T.m) * _ureg(self.get_default_unit('P'))
                 except:
                     raise Exception(f'Could not interpolate {other_p} = {other_v} at quality {self.x} from saturated steam table')
                 exclude_from_lever_rule = {'T', 'P', 'x', other_p}
@@ -495,7 +292,7 @@ class State:
                 raise ValueError('Either T or P must be specified along with another property for saturated state without explicit x')
             v = getattr(self, p)
             complement_value_satd = satd.interpolators[p][complement](v.m)
-            setattr(self, complement, complement_value_satd * ureg(self.get_default_unit(complement)))
+            setattr(self, complement, complement_value_satd * _ureg(self.get_default_unit(complement)))
             other_p = specs[0] if specs[1] == p else specs[1]
             other_v = getattr(self, other_p)
             other_v_Lsat = satd.interpolators[p][f'{other_p}L'](v.m)
@@ -504,6 +301,7 @@ class State:
             exclude_from_lever_rule = {'T', 'P', 'x', other_p}
             exclude_from_single_phase_saturated_resolve = {'T', 'P', 'x', other_p}
             initialize_single_phase_saturated_with = {p: v}
+            
         if 0.0 < self.x < 1.0:
             # generate the two saturated single-phase substates and apply lever rule
             # to resolve remaining properties of the overall state
@@ -515,32 +313,11 @@ class State:
             # This is a saturated liquid state, need to resolve all properties not already set
             for op in self._STATE_VAR_FIELDS - exclude_from_single_phase_saturated_resolve:
                 prop = satd.interpolators[other_p][f'{op}L'](other_v.m)
-                setattr(self, op, prop * ureg(self.get_default_unit(op)))
+                setattr(self, op, prop * _ureg(self.get_default_unit(op)))
         elif self.x == 1.0:
             # This is a saturated vapor state, need to resolve all properties not already set
             for op in self._STATE_VAR_FIELDS - exclude_from_single_phase_saturated_resolve:
                 prop = satd.interpolators[other_p][f'{op}V'](other_v.m)
-                setattr(self, op, prop * ureg(self.get_default_unit(op)))
+                setattr(self, op, prop * _ureg(self.get_default_unit(op)))
 
-    def _scalarize(self):
-        """ Convert all properties to scalars (not np.float64) """
-        for p in self._STATE_VAR_FIELDS.union({'x'}):
-            val = getattr(self, p)
-            if isinstance(val, np.float64):
-                setattr(self, p, val.item())
-        if hasattr(self, 'Liquid') and self.Liquid is not None:
-            self.Liquid._scalarize()
-        if hasattr(self, 'Vapor') and self.Vapor is not None:
-            self.Vapor._scalarize()
-
-    def delta(self, other: State) -> dict:
-        """ Calculate property differences between this state and another state """
-        delta_props = {}
-        for p in self._STATE_VAR_FIELDS:
-            val1 = getattr(self, p)
-            val2 = getattr(other, p)
-            if val1 is not None and val2 is not None:
-                delta_props[p] = val2 - val1
-        delta_props['Pv'] = other.Pv - self.Pv
-        return delta_props
 
