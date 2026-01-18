@@ -86,7 +86,7 @@ class State(ThermodynamicState):
         self._cache['_is_complete'] = True
         logger.debug(f'_resolve: State {self.name}: State resolution complete {self._cache["_is_complete"]}')
 
-    def _check_saturation(self, specs: dict[str, float]) -> bool:
+    def _check_saturation(self, specs: dict[str, float | pint.Quantity]) -> bool:
         satd = get_tables()['satd']
         """ Check if the specified state is saturated """
         if 'x' in specs:
@@ -301,7 +301,7 @@ class State(ThermodynamicState):
             exclude_from_lever_rule = {'T', 'P', 'x', other_p}
             exclude_from_single_phase_saturated_resolve = {'T', 'P', 'x', other_p}
             initialize_single_phase_saturated_with = {p: v}
-            
+
         if 0.0 < self.x < 1.0:
             # generate the two saturated single-phase substates and apply lever rule
             # to resolve remaining properties of the overall state
