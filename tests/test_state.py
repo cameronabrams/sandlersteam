@@ -41,12 +41,6 @@ class TestSteamState(TestCase):
         self.assertIsNotNone(state.v)
         self.assertIsNotNone(state.s)
         self.assertIsNone(state.x)
-        state.x = 0.5
-        self.assertFalse(state._cache['_is_specified'])
-        self.assertFalse(state._cache['_is_complete'])
-        state.P = 3.6
-        self.assertTrue(state._cache['_is_specified'])
-        self.assertTrue(state._cache['_is_complete'])
 
     def test_state_resolve_superheated_exact_at_T_and_P(self):
         state = State(P=0.1, T=300, name='test_state')

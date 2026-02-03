@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, fields
 from scipy.interpolate import interp1d
 from .satd import SaturatedSteamTables
 from .unsatd import UnsaturatedSteamTables
-from sandlermisc import ThermodynamicState, _ureg
+from sandlermisc import ThermodynamicState, ureg, R
 import pint
 import logging
 
@@ -31,10 +31,10 @@ LARGE = 1e20
 G_PER_MOL = 18.01528  # g/mol for water
 KG_PER_MOL = G_PER_MOL / 1000.000  # kg/mol for water
 MOL_PER_KG = 1.0 / KG_PER_MOL  # mol/kg for water
-TCK = 647.3 * _ureg('K')  # critical temperature in K
+TCK = 647.3 * ureg.K  # critical temperature in K
 TCC = TCK.to('degC')
 
-PCBAR = 221.20 * _ureg('bar')  # critical pressure in bar
+PCBAR = 221.20 * ureg.bar  # critical pressure in bar
 PCMPA = PCBAR.to('MPa')
 
 @dataclass
@@ -53,39 +53,55 @@ class State(ThermodynamicState):
     Molwt: float = G_PER_MOL
     """ Molar weight in g/mol """
     
-    _default_unit_map = {
-            'P': 'MPa',
-            'T': 'degC',
-            'v': 'm**3 / kg',
-            'u': 'kJ / kg',
-            'h': 'kJ / kg',
-            's': 'kJ / (kg * K)',
-            'Pv': 'kJ / kg',
+    def get_default_unit(self, var: str) -> pint.Unit:
+        """
+        Get the default unit for a given state variable.
+        
+        Parameters
+        ----------
+        var : str
+            State variable name (e.g., 'P', 'T', 'v', 'u', 'h', 's', 'x')
+        
+        Returns
+        -------
+        pint.Unit
+            Default unit for the variable
+        """
+        _default_unit_map = {
+            'P': ureg.MPa,
+            'T': ureg.degC,
+            'v': ureg.m**3 / ureg.kg,
+            'u': ureg.kJ / ureg.kg,
+            'h': ureg.kJ / ureg.kg,
+            's': ureg.kJ / (ureg.kg * ureg.K),
+            'Pv': ureg.kJ / ureg.kg,
         }
-   
-    def _resolve(self):
+        return _default_unit_map.get(var, ureg.dimensionless)
+
+    def resolve(self) -> bool:
         """
         Resolve all state variables from the two input variables.
         This is where you'd call your steam tables and calculate everything.
         """
         if not self._cache.get('_is_specified', False):
             logger.debug(f'State {self.name}: State not fully specified; cannot resolve.')
-            return
+            return False
         
         # try:
-        states_speced = self._cache.get('_input_vars', [])
+        states_speced = self.get_input_varnames()
         if len(states_speced) != 2:
-            return
+            return False
         
         if self._check_saturation(states_speced):
             self._resolve_satd(states_speced)
         else:
             self._resolve_unsatd(states_speced)
         self._scalarize()
-        logger.debug(f'_resolve: State {self.name}: Successfully resolved state with inputs: {states_speced}')
+        logger.debug(f'resolve: State {self.name}: Successfully resolved state with inputs: {states_speced}')
         self._cache['_is_complete'] = True
-        logger.debug(f'_resolve: State {self.name}: State resolution complete {self._cache["_is_complete"]}')
-
+        logger.debug(f'resolve: State {self.name}: State resolution complete {self._cache["_is_complete"]}')
+        return True
+        
     def _check_saturation(self, specs: dict[str, float | pint.Quantity]) -> bool:
         satd = get_tables()['satd']
         """ Check if the specified state is saturated """
@@ -158,7 +174,7 @@ class State(ThermodynamicState):
             if p not in specdict and p != 'x':
                 # interpolators return scalars in default units, so we
                 # put units on them here
-                setattr(self, p, v * _ureg(self.get_default_unit(p)))
+                setattr(self, p, v * self.get_default_unit(p))
     
     def _resolve_at_TorP_and_Theta(self, specs: list[str]):
         satd = get_tables()['satd']
@@ -211,7 +227,7 @@ class State(ThermodynamicState):
             retdict = subc.Bilinear(specdict)
         for p, v in retdict.items():
             if p not in specs and p != 'x':
-                setattr(self, p, v * _ureg(self.get_default_unit(p)))
+                setattr(self, p, v * self.get_default_unit(p))
 
     def _resolve_at_Theta1_and_Theta2(self, specs: list[str]):
         suph = get_tables()['suph']
@@ -238,7 +254,7 @@ class State(ThermodynamicState):
         logger.debug(f'Resolved state with {retdict}')
         for p, v in retdict.items():
             if p not in specs and p != 'x':
-                setattr(self, p, v * _ureg(self.get_default_unit(p)))
+                setattr(self, p, v * self.get_default_unit(p))
 
     def _resolve_satd(self, specs: list[str]):
         """
@@ -260,7 +276,7 @@ class State(ThermodynamicState):
                 other_v = getattr(self, other_p)
                 complement = 'P' if other_p == 'T' else 'T'
                 complement_value_satd = satd.interpolators[other_p][complement](other_v.m)
-                setattr(self, complement, complement_value_satd * _ureg(self.get_default_unit(complement)))
+                setattr(self, complement, complement_value_satd * self.get_default_unit(complement))
                 exclude_from_lever_rule = {'T', 'P', 'x'}
                 exclude_from_single_phase_saturated_resolve = {'T', 'P', 'x'}
                 initialize_single_phase_saturated_with = {other_p: other_v}
@@ -272,7 +288,7 @@ class State(ThermodynamicState):
                 f = svi(interp1d(X, Y))
                 try:
                     self.T = f(other_v.m)
-                    self.P = satd.interpolators['T']['P'](self.T.m) * _ureg(self.get_default_unit('P'))
+                    self.P = satd.interpolators['T']['P'](self.T.m) * self.get_default_unit('P')
                 except:
                     raise Exception(f'Could not interpolate {other_p} = {other_v} at quality {self.x} from saturated steam table')
                 exclude_from_lever_rule = {'T', 'P', 'x', other_p}
@@ -292,7 +308,7 @@ class State(ThermodynamicState):
                 raise ValueError('Either T or P must be specified along with another property for saturated state without explicit x')
             v = getattr(self, p)
             complement_value_satd = satd.interpolators[p][complement](v.m)
-            setattr(self, complement, complement_value_satd * _ureg(self.get_default_unit(complement)))
+            setattr(self, complement, complement_value_satd * self.get_default_unit(complement))
             other_p = specs[0] if specs[1] == p else specs[1]
             other_v = getattr(self, other_p)
             other_v_Lsat = satd.interpolators[p][f'{other_p}L'](v.m)
@@ -313,11 +329,11 @@ class State(ThermodynamicState):
             # This is a saturated liquid state, need to resolve all properties not already set
             for op in self._STATE_VAR_FIELDS - exclude_from_single_phase_saturated_resolve:
                 prop = satd.interpolators[other_p][f'{op}L'](other_v.m)
-                setattr(self, op, prop * _ureg(self.get_default_unit(op)))
+                setattr(self, op, prop * self.get_default_unit(op))
         elif self.x == 1.0:
             # This is a saturated vapor state, need to resolve all properties not already set
             for op in self._STATE_VAR_FIELDS - exclude_from_single_phase_saturated_resolve:
                 prop = satd.interpolators[other_p][f'{op}V'](other_v.m)
-                setattr(self, op, prop * _ureg(self.get_default_unit(op)))
+                setattr(self, op, prop * self.get_default_unit(op))
 
 
