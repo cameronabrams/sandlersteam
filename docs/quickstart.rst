@@ -39,13 +39,12 @@ Unsaturated steam/water state calculations:
 
 Output::
 
-   T  =   400 degC
-   P  =   1.1 MPa
-   v  =  0.2807 m**3 / kg
-   s  =  7.42125 kJ / (kg * K)
-   h  =  3262.3 kJ / kg
-   u  =  2956.1 kJ / kg
-   Pv =  308.77 kJ / kg
+   T =   400 degree_Celsius
+   P =   1.1 megapascal
+   v =  0.2807 meter ** 3 / kilogram
+   u =  2956.1 kilojoule / kilogram
+   h =  3262.3 kilojoule / kilogram
+   s =  7.42125 kilojoule / kelvin / kilogram
 
 
 Saturated steam/water state calculations:
@@ -56,24 +55,21 @@ Saturated steam/water state calculations:
 
 Output::
 
-   T   =  250.4 degC
-   P   =     4 MPa
-   v   =  0.0449272 m**3 / kg
-   s   =  5.74273 kJ / (kg * K)
-   h   =  2629.99 kJ / kg
-   u   =  2450.3 kJ / kg
-   Pv  =  179.709 kJ / kg
-   x   = 0.9 mass fraction vapor
-   vL  =  0.001252 m**3 / kg
-   sL  =  2.7964 kJ / (kg * K)
-   hL  =  1087.31 kJ / kg
-   uL  =  1082.31 kJ / kg
-   PvL =  5.008 kJ / kg
-   vV  =  0.04978 m**3 / kg
-   sV  =  6.0701 kJ / (kg * K)
-   hV  =  2801.4 kJ / kg
-   uV  =  2602.3 kJ / kg
-   PvV =  199.12 kJ / kg
+   T  =  250.4 degree_Celsius
+   P  =     4 megapascal
+   v  =  0.0449272 meter ** 3 / kilogram
+   u  =  2450.3 kilojoule / kilogram
+   h  =  2629.99 kilojoule / kilogram
+   s  =  5.74273 kilojoule / kelvin / kilogram
+   x  = 0.9 dimensionless
+   vL =  0.001252 meter ** 3 / kilogram
+   uL =  1082.31 kilojoule / kilogram
+   hL =  1087.31 kilojoule / kilogram
+   sL =  2.7964 kilojoule / kelvin / kilogram
+   vV =  0.04978 meter ** 3 / kilogram
+   uV =  2602.3 kilojoule / kilogram
+   hV =  2801.4 kilojoule / kilogram
+   sV =  6.0701 kilojoule / kelvin / kilogram
 
 From Python
 ~~~~~~~~~~~
@@ -135,9 +131,9 @@ The attributes you can set using dot notation are:
 * T : Temperature (°C)
 * P : Pressure (MPa)
 * v : Specific volume (m³/kg)
-* h : Specific enthalpy (kJ/kg)
-* s : Specific entropy (kJ/(kg·K))
 * u : Specific internal energy (kJ/kg)
+* h : Specific enthalpy (kJ/kg)
+* s : Specific entropy (kJ/(kg K))
 * x : Vapor mass fraction (0 to 1 for two-phase states)
 * name : just a label for the state (string)
 
@@ -155,25 +151,23 @@ From the Command Line
 
 Output::
 
-   State-change calculations for water/steam:
+   State-change calculations for Steam:
 
-   State 1:                       State 2:
-   T  =   800 degC                T  =  1200 degC
-   P  =     4 MPa                 P  =   4.5 MPa
-   v  =  0.12287 m**3 / kg        v  =  0.15098 m**3 / kg
-   s  =  7.8502 kJ / (kg * K)     s  =  8.5825 kJ / (kg * K)
-   h  =  4141.5 kJ / kg           h  =  5136.9 kJ / kg
-   u  =   3650 kJ / kg            u  =  4457.5 kJ / kg
-   Pv =  491.48 kJ / kg           Pv =  679.41 kJ / kg
+   State 1:                                      State 2:
+   T =   800 degree_Celsius                      T =  1200 degree_Celsius
+   P =     4 megapascal                          P =   4.5 megapascal
+   v =  0.12287 meter ** 3 / kilogram            v =  0.15098 meter ** 3 / kilogram
+   u =   3650 kilojoule / kilogram               u =  4457.5 kilojoule / kilogram
+   h =  4141.5 kilojoule / kilogram              h =  5136.9 kilojoule / kilogram
+   s =  7.8502 kilojoule / kelvin / kilogram     s =  8.5825 kilojoule / kelvin / kilogram
 
    Property changes:
-   ΔT  =   400 degC
-   ΔP  =   0.5 MPa
-   Δv  =  0.02811 m**3 / kg
-   Δs  =  0.7323 kJ / (kg * K)
-   Δh  =  995.4 kJ / kg
-   Δu  =  807.5 kJ / kg
-   ΔPv =  187.93 kJ / kg
+   ΔT  =    400 delta_degree_Celsius
+   ΔP  =    0.5 megapascal
+   Δv  =  0.02811 meter ** 3 / kilogram
+   Δu  =  807.5 kilojoule / kilogram
+   Δh  =  995.4 kilojoule / kilogram
+   Δs  =  0.7323 kilojoule / kelvin / kilogram
 
 From Python
 ~~~~~~~~~~~

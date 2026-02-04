@@ -17,7 +17,7 @@ Calculate properties of superheated steam at 350 C and 2.0 MPa:
 
    from sandlersteam import State
    
-   # Initialize EOS and set state
+   # Initialize and resolve state
    state = State(T=350, P=2.0)
    
    # Display results
@@ -38,7 +38,7 @@ Calculate properties of saturated steam at 0.5 MPa:
 
    from sandlersteam import State
    
-   # Initialize State
+   # Initialize and resolve state
    state = State(P=0.5, x=1.0)  # x=1.0 for saturated vapor
    
    # Display results

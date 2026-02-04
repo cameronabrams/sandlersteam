@@ -44,7 +44,11 @@ class State(ThermodynamicState):
     """
 
     name: str = 'Sandler-Steam'
-    """ state name assigned upon creation (optional) """
+    
+    description: str = 'Sandler Steam Table State'
+
+    _PARAMETER_ORDERED_FIELDS = ['Tc', 'Pc', 'Molwt']
+    _PARAMETER_FIELDS = frozenset(_PARAMETER_ORDERED_FIELDS)
 
     Tc: pint.Quantity = TCC
     """ Critical temperature """
