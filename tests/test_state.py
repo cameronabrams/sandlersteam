@@ -1,5 +1,5 @@
 from unittest import TestCase
-from sandlersteam.state import State
+from sandlersteam.state import State, get_tables
 import pint
 ureg = pint.UnitRegistry(autoconvert_offset_to_baseunit = True)
 import logging
@@ -94,3 +94,14 @@ class TestSteamState(TestCase):
         state = State(T=120, h=1500.0, name='test_state')
         self.assertAlmostEqual(state.P.m, 0.19853, places=2)
         self.assertAlmostEqual(state.x, 0.452, places=2)
+
+    def test_state_resolve_at_P_and_s(self):
+        # -P 40 -s 7.4651
+        state = State(P=40, s=7.4651, name='test_state')
+        self.assertAlmostEqual(state.T.m, 1200, places=2)
+
+    def test_min_T_at_P(self):
+        tables = get_tables()
+        suph = tables['suph']
+        Tmin = suph.minT_at_P(5.0)
+        self.assertAlmostEqual(Tmin, 263.99, places=2)

@@ -153,6 +153,86 @@ class UnsaturatedSteamTable:
             self.uniqs[d] = np.sort(np.array(list(set(self.data[d].to_list()))))
         # logger.debug(f'{self.data.head()}')
 
+    def minT_at_P(self, P: float) -> float:
+        """
+        Minimum temperature at given pressure in MPa
+        """
+        # P is either explicitly in the table, or we interpolate between two P values
+        df: pd.DataFrame = self.data
+        tdf = df[df['P'] == P]
+        if not tdf.empty:
+            Tmin = tdf['T'].min()
+        else:
+            for PL, PR in zip(self.uniqs['P'][:-1], self.uniqs['P'][1:]):
+                if PL < P < PR:
+                    break
+            else:
+                raise Exception(f'P {P} not between {self.uniqs["P"][0]} and {self.uniqs["P"][-1]}')
+            ldf, rdf = df[df['P'] == PL], df[df['P'] == PR]
+            TminL, TminR = ldf['T'].min(), rdf['T'].min()
+            Tmin = np.interp(P, [PL, PR], [TminL, TminR])
+        return Tmin
+    
+    def minP_at_T(self, T: float) -> float:
+        """
+        Minimum pressure at given temperature in C
+        """
+        # T is either explicitly in the table, or we interpolate between two T values
+        df: pd.DataFrame = self.data
+        tdf = df[df['T'] == T]
+        if not tdf.empty:
+            Pmin = tdf['P'].min()
+        else:
+            for TL, TR in zip(self.uniqs['T'][:-1], self.uniqs['T'][1:]):
+                if TL < T < TR:
+                    break
+            else:
+                raise Exception(f'T {T} not between {self.uniqs["T"][0]} and {self.uniqs["T"][-1]}')
+            ldf, rdf = df[df['T'] == TL], df[df['T'] == TR]
+            PminL, PminR = ldf['P'].min(), rdf['P'].min()
+            Pmin = np.interp(T, [TL, TR], [PminL, PminR])
+        return Pmin
+
+    def minTh_at_P(self, th: str, P: float) -> float:
+        """
+        Minimum temperature at given pressure in MPa for specified property th
+        (th = 'v', 'u', 's', or 'h')
+        """
+        df: pd.DataFrame = self.data
+        tdf = df[df['P'] == P]
+        if not tdf.empty:
+            Tmin = tdf[th].min()
+        else:
+            for PL, PR in zip(self.uniqs['P'][:-1], self.uniqs['P'][1:]):
+                if PL < P < PR:
+                    break
+            else:
+                raise Exception(f'P {P} not between {self.uniqs["P"][0]} and {self.uniqs["P"][-1]}')
+            ldf, rdf = df[df['P'] == PL], df[df['P'] == PR]
+            TminL, TminR = ldf[th].min(), rdf[th].min()
+            Tmin = np.interp(P, [PL, PR], [TminL, TminR])
+        return Tmin
+    
+    def minTh_at_T(self, th: str, T: float) -> float:
+        """
+        Minimum pressure at given temperature in C for specified property th
+        (th = 'v', 'u', 's', or 'h')
+        """
+        df: pd.DataFrame = self.data
+        tdf = df[df['T'] == T]
+        if not tdf.empty:
+            Pmin = tdf[th].min()
+        else:
+            for TL, TR in zip(self.uniqs['T'][:-1], self.uniqs['T'][1:]):
+                if TL < T < TR:
+                    break
+            else:
+                raise Exception(f'T {T} not between {self.uniqs["T"][0]} and {self.uniqs["T"][-1]}')
+            ldf, rdf = df[df['T'] == TL], df[df['T'] == TR]
+            PminL, PminR = ldf[th].min(), rdf[th].min()
+            Pmin = np.interp(T, [TL, TR], [PminL, PminR])
+        return Pmin
+
     def TPBilinear(self, specdict: dict):
         """
         Bilinear interpolation given T and P
@@ -249,6 +329,7 @@ class UnsaturatedSteamTable:
         Bilinear interpolation given P and another property 
         (v, u, s, h, but not T)
         """
+        logger.debug(f'PThBilinear called with specs: {specdict}')
         xn, yn = specdict.keys()
         xi, yi = specdict.values()
         assert xn == 'P'
@@ -259,8 +340,13 @@ class UnsaturatedSteamTable:
         retdict = {}
         retdict['T'] = xi
         retdict[yn] = yi
+        logger.debug(f'First interpolant is {xn}={xi}, second is {yn}={yi}')
+        logger.debug(f'in uniqs? {xi in self.uniqs["P"]}')
+        logger.debug(self.uniqs['P'])
         if xi in self.uniqs['P']:
             tdf = df[df['P'] == xi]
+            logger.debug(f'Found data at P={xi} MPa')
+            logger.debug(f'tdf:\n{tdf.to_string()}')
             X = np.array(tdf[yn])
             for pp in dof:
                 Y = np.array(tdf[pp])

@@ -206,29 +206,41 @@ class State(ThermodynamicState):
 
         op = specs[0] if specs[1] == p else specs[1]
         th = getattr(self, op)
-
+        logger.debug(f'resolve_at_TorP_and_Theta: Checking saturation at {p}={v} for property {op}={th}')
         if not supercritical:
             thL = satd.interpolators[p][f'{op}L'](v.m)
             thV = satd.interpolators[p][f'{op}V'](v.m)
+            logger.debug(f'Saturation limits for {p}: {thL} to {thV}')
             if th.m < thL:
                 is_subcooled = True
             elif th.m > thV:
                 is_superheated = True
             else:
                 raise ValueError(f'Specified state is saturated based on {p}={v} and {op}={th}')
-        else:
-            if hasT:
-                is_superheated = True
-            else:
-                is_subcooled = True
-
-        if not is_superheated and not is_subcooled:
+        logger.debug(f'is_superheated: {is_superheated}, is_subcooled: {is_subcooled}, supercritical: {supercritical}')
+        if not is_superheated and not is_subcooled and not supercritical:
             raise ValueError(f'Specified state is saturated based on {p}={v} and {op}={th}')
         specdict = {p: v.m, op: th.m}
         if is_superheated:
             retdict = suph.Bilinear(specdict)
-        else:
+        elif is_subcooled:
             retdict = subc.Bilinear(specdict)
+        else:
+            # if the temperature is greater than the lowest temperature available in the superheated table
+            # at the given pressure, we treat it as superheated
+            if hasT:
+                Th_min_suph = suph.minTh_at_T(op, self.T.m)
+                if th.m >= Th_min_suph:
+                    retdict = suph.Bilinear(specdict)
+                else:
+                    retdict = subc.Bilinear(specdict)
+            elif hasP:
+                Th_min_suph = suph.minTh_at_P(op, self.P.m)
+                if th.m >= Th_min_suph:
+                    retdict = suph.Bilinear(specdict)
+                else:
+                    retdict = subc.Bilinear(specdict)
+
         for p, v in retdict.items():
             if p not in specs and p != 'x':
                 setattr(self, p, v * self.get_default_unit(p))
