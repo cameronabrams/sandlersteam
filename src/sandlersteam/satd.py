@@ -35,7 +35,7 @@ class SaturatedSteamTables:
     # _sp = ['T', 'P', 'vL', 'vV', 'uL', 'uV', 'hL', 'hV', 'sL', 'sV']
     # _su = ['C','MPa','m3/kg','m3/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg','kJ/kg-K','kJ/kg-K']
     # _sfs = ['{: .1f}','{: .2f}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}','{: .6g}']
-    colorder = ['P', 'T', 'vL', 'vV', 'uL', 'uV', 'hL', 'hV', 'sL', 'sV']
+    colorder = ['P', 'T', 'vL', 'vV', 'uL', 'Du', 'uV', 'hL', 'Dh', 'hV', 'sL', 'Ds', 'sV']
     def __init__(self):
         self.DF = {'P': merge_high_low_P_tables(
                         pd.read_csv(self.tablesP[0], sep=r'\s+', header=0, index_col=None),
