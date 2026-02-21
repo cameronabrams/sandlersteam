@@ -46,7 +46,7 @@ def my_split(data: str, hder: list[str], P: list[float], Tsat: list[float | None
         df.columns = hder
         i = 1
         for p, ts in zip(P, Tsat):
-            ndf = pd.DataFrame({'T': df['T'].copy(), 'P': np.array([p for _ in range(df.shape[0])])})
+            ndf = pd.DataFrame({'T': df['T'].astype(object).copy(), 'P': np.array([p for _ in range(df.shape[0])])})
             if ndf.iloc[0, 0] == 'Sat.':
                 ndf.iloc[0, 0] = ts
             ndf['T'] = ndf['T'].astype(float)
